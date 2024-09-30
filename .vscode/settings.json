@@ -6,7 +6,6 @@
     "editor.formatOnSave": true,
     "terminal.integrated.fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
     "terminal.integrated.fontSize": 14,
-
     "editor.fontLigatures": true,
     "editor.tokenColorCustomizations": {
         //"comments": "#6A9955",
@@ -15,12 +14,13 @@
         //"variables": "#CE9178",
         //"functions": "#DCDCAA",
         //"numbers": "#DCDCAA"
-        "comments": "#808080",  // Comments color
-        "strings": "#6A8759",  // String color
-        "keywords": "#CC7832",  // Keyword color
-        "functions": "#FFC66D",  // Function color
-        "numbers": "#6897BB",  // Number color
-        "variables": "#A9B7C6",  // Variables color
-    }
-    }
+        "comments": "#808080", // Comments color
+        "strings": "#6A8759", // String color
+        "keywords": "#CC7832", // Keyword color
+        "functions": "#FFC66D", // Function color
+        "numbers": "#6897BB", // Number color
+        "variables": "#A9B7C6", // Variables color
+    },
+    "git.autofetch": true,
+    "git.fetchInterval": 2000 // where 1800 == 30 minutes
 }
