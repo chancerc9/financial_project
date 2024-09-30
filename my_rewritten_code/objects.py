@@ -1,10 +1,11 @@
 # Standard library imports
 import argparse
-import datetime as dt
+import datetime as datetime
 import json
 import os
 import sys
 from collections import OrderedDict
+from typing import Dict
 
 # Third-party library imports
 import numpy as np
@@ -482,7 +483,6 @@ def create_cf_tables(ftse_data: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 # THEN do the code
 # do it fast then it'll be well
 
-from typing import Dict
 
 def create_sensitivity_tables(cashflows: Dict[str, pd.DataFrame], shocks: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
