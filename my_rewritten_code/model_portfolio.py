@@ -26,6 +26,12 @@ From command line or process control:
 
 In all cases, if dates provided are historic it will cause an over-write, since only one "asofdate" per security is allowed in the database.
 """
+
+"""
+    This provided code is a complex script that processes bond-related data, 
+    calculates key rate durations (KRDs), and uploads the resulting sensitivities 
+    to a database. 
+"""
 # Standard library imports
 import argparse
 import datetime as dt
@@ -71,47 +77,49 @@ General_cur = General_conn.con.cursor()
 
 # Logging directories:
 MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories 'brenda' and 'logs' if they don't exist
-LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'), 'a')  # Appends to existing logfile; else creates new
+os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
+LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'), 'a')  # Append to the existing logfile, or create a new one
 
-# benchmarking_test
-
-
-def reading_asset_KRDs(GivenDate):
+def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     """
-    Main method to create the KRD table for assets.
+    Creates the Key Rate Duration (KRD) table for assets on a given date.
+    (Main method to create the KRD table for assets.)
+
+    Parameters:
+    GivenDate (pd.Timestamp): The date for which to calculate the KRD table.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing weighted sensitivities for each bond rating.
     """
+    # Retrieves bond curve data and FTSE bond info from our database
+    bond_curves = helpers.get_bond_curves(GivenDate)  # Retrieve bond curve data
+    ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info
 
-    bond_curves = helpers.get_bond_curves(GivenDate) # gets bond curve data from our database
+    # Create weight tables, cashflow tables, shock tables, and sensitivity tables
+    weights, totals = helpers.create_weight_tables(ftse_data) # Makes a weight table for each bond rating and bucket
+    cf_tables = helpers.create_cf_tables(ftse_data) # Makes a 30 year average cashflow table for each bond rating and bucket, with principal 100
+    shock_tables = helpers.create_shock_tables(bond_curves) # Makes 30 year up and down shock tables for each bond rating and bucket
+    sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables) # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
 
-    ftse_data = helpers.get_ftse_data(GivenDate) # gets ftse bond info from our database
-
-    weights, totals = helpers.create_weight_tables(ftse_data) # makes a weight table for each bond rating and bucket
-
-    cf_tables = helpers.create_cf_tables(ftse_data) # makes a 30 year average cashflow table for each bond rating and bucket, with principal 100
-
-    shock_tables = helpers.create_shock_tables(bond_curves) # makes 30 year up and down shock tables for each bond rating and bucket
-
-    sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables) # uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
-
+    # Create directories for storing the results
     cur_date = GivenDate.strftime('%Y%m%d')
-    path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', 'Brenda', 'sensitivities', # added in 'Brenda'
-                        cur_date)
-    os.makedirs(path, exist_ok=True)  # Create directories 'brenda' and 'logs' if they don't exist - Brenda
+    path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', 'Brenda', 'sensitivities', cur_date)
+    os.makedirs(path, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
 
-    if not os.path.exists(path):
-        os.mkdir(path)
-
+    # Save sensitivity tables as Excel files for each rating
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        file_path = path + '/' + rating + '_sensitivities_' + cur_date + '.xlsx'
+        file_path = os.path.join(path, f'{rating}_sensitivities_{cur_date}.xlsx')
         if not os.path.exists(file_path):
             with pd.ExcelWriter(file_path) as writer:
                 sensitivities[rating].to_excel(writer)
 
-    df = helpers.make_krd_table(weights, sensitivities) # calculates overall krd by weighing the sensitivites against the bond weights within the ftse universe
-    df['rating'] = df['rating'].replace(
-        {'CorporateBBB': 'corporateBBB', 'CorporateA': 'corporateA',
-         'CorporateAAA_AA': 'corporateAAA_AA'})
+    # Calculate and return the overall KRD table
+    df = helpers.make_krd_table(weights, sensitivities)
+    df['rating'] = df['rating'].replace({
+        'CorporateBBB': 'corporateBBB',
+        'CorporateA': 'corporateA',
+        'CorporateAAA_AA': 'corporateAAA_AA'
+    })
 
     return df
 
@@ -331,801 +339,50 @@ def reading_liabilities(cur_date, over_under=None):
 
 # Reads in asset segments for liabilities:
 
-def reading_asset_mix(Given_date, curMonthBS=False, sheet_version=1):
+def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False, sheet_version: int = 1):  # -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Reads and calculates the asset mix for liabilities based on the given date.
+
+    Parameters:
+    Given_date (pd.Timestamp): The date for which the asset mix is being calculated.
+    curMonthBS (bool, optional): Whether to use the current month's balance sheet. Defaults to False.
+    sheet_version (int, optional): Sheet version to use; 1 for segments, 0 for totals. Defaults to 1.
+
+    Returns:
+    Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: Returns three DataFrames:
+        - df_public: Public assets.
+        - df_private: Private assets.
+        - df_mortgages: Mortgages.
+    """
     if sheet_version == 1:  # 1 for segments, 0 for totals
         totals = helpers.BSTotals(Given_date, 1)  # totals 1 = segments
-    # the way they do this is so that they can use the self-made SBSTotals balance sheet replaccement (allows for easier swapping)
     else:
-    # getting the hardcoded weights
-        totals = helpers.BSTotals(Given_date, 0)  # Brenda # totals 0 = total
+        totals = helpers.BSTotals(Given_date, 0)  # totals 0 = total
 
     weights = helpers.percents(Given_date) # weights for total is same as weights for everything else, maybe that's where the problem shows - see weights in hardcoded.xlsx (OR)
     weights = weights[['ACCUM', 'PAYOUT', 'UNIVERSAL', 'NONPAR', 'GROUP', 'PARCSM', 'Total', 'Surplus', 'SEGFUNDS']]
-    weights = weights.dropna(axis=1, how='all')  # inefficient
+    weights = weights.dropna(axis=1, how='all')  # Remove columns with all NaNs (* inefficient *)
+
     df = weights.multiply(pd.Series(totals))
     df.index.name = None
 
-
-
-    # splits the table into public and privates
+    # Adjust Corporate bonds and rename columns for clarity
     df.loc['CorpA'] = df.loc['CorpA'] + df.loc['CorpBBB'] / 2
     df.loc['CorpBBB'] = df.loc['CorpBBB'] / 2
     df.rename(columns={'ACCUM': 'Accum', 'PAYOUT': 'Payout', 'GROUP': 'group', 'UNIVERSAL': 'ul', 'NONPAR': 'np'}, inplace=True)
-    df_public = df[:5:]
-    df_private = df[5:11]
-    df_private = df_private.drop(columns=['SEGFUNDS'])
 
-    df_private.rename({'PrivateAA': 'corporateAAA_AA', 'PrivateA': 'corporateA',
-                       'PrivateBBB': 'corporateBBB', 'MortgagesInsured': 'Federal'}, inplace=True)
-    df_public = df_public.rename({'CorpAAA_AA': 'corporateAAA_AA', 'CorpA': 'corporateA',
-                       'CorpBBB': 'corporateBBB'})
+    # Split into public, private, and mortgage tables
+    df_public = df.iloc[:5]
+    df_private = df.iloc[5:11].drop(columns=['SEGFUNDS'])
 
+    df_private.rename({'PrivateAA': 'corporateAAA_AA', 'PrivateA': 'corporateA', 'PrivateBBB': 'corporateBBB', 'MortgagesInsured': 'Federal'}, inplace=True)
+    df_public.rename({'CorpAAA_AA': 'corporateAAA_AA', 'CorpA': 'corporateA', 'CorpBBB': 'corporateBBB'}, inplace=True)
 
-    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']]
-    df_mortgages.rename({'MortgagesConv': 'corporateBBB'}, inplace=True)
-
+    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'corporateBBB'}, inplace=False)  # orig: inplace=True; use inplace=FALSE for debugging purposes.
     df_private.drop(['PrivateBB_B', 'MortgagesConv', 'Federal'], inplace=True)
-    df_private.loc['Provincial'] = 0
-    df_private.drop(['Provincial'], inplace=True)
 
     return df_public, df_private, df_mortgages
 
-# Brenda (*begin)
-def optimization_comments(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
-    KRDs = reading_asset_KRDs(given_date)
-
-    # Reading asset mix
-    if curMonthBS:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS)
-    else:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date)
-
-    # Setting asset mix based on asset type
-    if asset_type == 'private':
-        Asset_mix = df_private
-    elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages
-    else:
-        Asset_mix = df_public
-
-    # Get target sensitivities from the database
-    get_target_sensitivities_query = """ SELECT * FROM target_sensitivity WHERE date= '{}' """.format(over_under.date())
-    get_col_names = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'target_sensitivity';'''
-    col_names = [name[0] for name in execute_table_query(get_col_names, 'Benchmark', fetch=True)]
-    df = pd.DataFrame(execute_table_query(get_target_sensitivities_query, 'Benchmark', fetch=True), columns=col_names)
-    df['rating'] = df['rating'].replace({
-        'FEDERAL': 'Federal',
-        'CorpBBB': 'corporateBBB',
-        'PROVINCIAL': 'Provincial',
-        'CorpA': 'corporateA',
-        'CorpAAA_AA': 'corporateAAA_AA',
-        'CorpBB_B': 'corporateBB_B'
-    })
-    df = df.drop('70Y', axis=1)
-
-    # Separate DB values into tables for different asset classes
-    private_sensitivity = helpers.private_sensitivities().set_index(['portfolio', 'rating'])
-    mortgage_sensitivity = helpers.mortgage_sensitivities().set_index(['portfolio', 'rating'])
-
-    # Set the net sensitivity based on asset type
-    if asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-    else:
-        net_sensitivity = helpers.public_sensitivities()
-
-    # Create a solution dataframe
-    solution_df = pd.DataFrame()
-
-    # Loop through each portfolio
-    for portfolio in ['ul', 'Payout', 'Accum', 'group', 'np', 'Total']:
-        df_portfolio = net_sensitivity[net_sensitivity['portfolio'] == portfolio]
-
-        # Adjust weights for Total portfolio (swap weights to 1.0)
-        if portfolio == 'Total' and swap:
-            Asset_mix['Total'] = Asset_mix['Total'].apply(lambda x: 1.0)
-
-        # Loop through each rating class
-        for rating in ['corporateBBB', 'corporateA', 'Federal', 'corporateAAA_AA', 'Provincial']:
-            if ((asset_type == 'mortgage') and rating in ['corporateAAA_AA', 'corporateA', 'Provincial']) or \
-                    ((asset_type == 'private') and rating in ['Federal', 'Provincial']):
-                continue
-
-            # Skip certain portfolios for public optimization
-            if asset_type == 'public' and portfolio in ['np', 'ul', 'Payout']:
-                if rating in ['corporateBBB', 'corporateA']:
-                    continue
-
-            # Obtain the KRDs for the corresponding rating
-            krd = KRDs[KRDs['rating'] == rating].reset_index(drop=True).drop(columns=['index'])
-            investment_val = Asset_mix[portfolio].loc[rating] / 10000
-
-            # Skip optimization if investment value is zero
-            if investment_val == 0:
-                continue
-
-            hedge_ratio = 1
-            ''' Get the target sensitivities for the current rating , then use the invetment value and hedge ratio to generate the final target used in the optimization'''
-            target_prep = df_portfolio[df_portfolio['rating'] == rating].drop(df_portfolio.columns[[0, 1]], axis=1)
-
-            target = (target_prep) / investment_val
-            target = target.to_numpy()[0]
-            target = target.T * -1
-
-            # Define the objective function and constraints
-            def objective(x):
-                c = np.multiply(x, krd.to_numpy())
-                temp = c.sum(axis=1) - target
-                return np.dot(temp.T, temp)
-
-            # Optimizer setup
-            cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-            bnds = [(0, 1)] * 6
-            solution = minimize(objective, [1, 0, 0, 0, 0, 0], method='SLSQP', bounds=bnds, constraints=cons)
-
-            # Store solution
-            if solution.success:
-                new_row_df = pd.DataFrame(solution.x).T
-                new_row_df['portfolio'] = portfolio
-                new_row_df['rating'] = rating
-                solution_df = pd.concat([solution_df, new_row_df], ignore_index=True)
-
-    # Finalize and return solution dataframe
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(4)
-    return solution_df
-
-def optimization_c(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):  # default sheet_version is segments (1)
-    KRDs = reading_asset_KRDs(given_date)
-
-    # Reading asset mix
-    if curMonthBS:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS) #, sheet_version) # top
-    else:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date) #, False, sheet_version)
-        # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-    # Setting asset mix based on asset type
-    if asset_type == 'private':
-        Asset_mix = df_private
-    elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages
-    else:
-        Asset_mix = df_public # For all
-
-
-    #''' Getting target sensitivities for all asset classes from the database '''
-    #get_target_sensitivities_query = """
-    #                SELECT *
-    #                FROM target_sensitivity
-    #                WHERE date= '{}'
-    #                """.format(over_under.date())
-    #get_col_names = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'target_sensitivity';'''
-    #col_names = [name[0] for name in execute_table_query(get_col_names, 'Benchmark', fetch=True)]
-    #df = pd.DataFrame(execute_table_query(get_target_sensitivities_query, 'Benchmark', fetch=True), columns=col_names)
-
-
-
-    #df['rating'] = df['rating'].replace(
-     #   {'FEDERAL': 'Federal', 'CorpBBB': 'corporateBBB', 'PROVINCIAL': 'Provincial', 'CorpA': 'corporateA',
-    #     'CorpAAA_AA': 'corporateAAA_AA', 'CorpBB_B': 'corporateBB_B'})
-    #df = df.drop('70Y', axis=1)
-
-
-
-    ''' Separating the db values into 3 tables, one for each asset class '''
-    private_sensitivity = helpers.private_sensitivities().set_index(['portfolio', 'rating'])
-    mortgage_sensitivity = helpers.mortgage_sensitivities().set_index(['portfolio', 'rating'])
-
-
-    ''' Setting the sensitivities to be used as targets for the optimizer, for the correct asset class'''
-    if asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    else:
-        ''' For the public optimization, we subtract the private and mortgage target sensitivities from the public target and optimize for the net sensitivity '''
-        net_sensitivity = helpers.public_sensitivities()
-
-
-
-
-    ''' For the sensitivity targets for the public totals, we subtract the public and mortgage components of all ratings
-    we sum the public sensitivities for all 5 portfolios, then subtract the sum of privates for all portfolios, including ParCSM and Surplus'''
-    if asset_type == 'public':
-        net_sensitivity = helpers.public_sensitivities()
-    elif asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-
-
-
-    solution_df = pd.DataFrame()
-    solved_dollar_sensitivities = pd.DataFrame()
-
-    # df for targets (test output)
-    krd_targets = pd.DataFrame()
-
-    ''' This df is a table of expected returns taken from the Parallel_tilt_curve_history'''
-    expected_return = helpers.get_expected_returns()
-
-# Brenda
-    # KRDs = reading_asset_KRDs(given_date)
-    if curMonthBS:
-        df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date,
-                                                                   curMonthBS, 0)  # , sheet_version) # top
-    else:
-        df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date, False, 0)  # , False, sheet_version)
-        # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-    # reading_liabilities(given_date)
-
-    ''' Setting Asset_mix to the correct table based on the given asset class '''
-    if asset_type == 'private':
-        Asset_mix2 = df_private2
-    elif asset_type == 'mortgage':
-        Asset_mix2 = df_mortgages2
-    else:
-        Asset_mix2 = df_public2
-
-
-# Brenda
-
-
-# Optimize total first
-# and then segments
-    ''' start the optimization process for each portfolio'''
-    for portfolio in ['ul', 'Payout', 'Accum', 'group', 'np', 'Total']:
-
-        ''' first get the target sensitivities from the df generated above for the current portfolio '''
-        df_portfolio = net_sensitivity[net_sensitivity['portfolio'] == portfolio]
-
-
-        ''' Next, go through each rating class to optimize for each. Calculate provinical last because the target 
-        for total-provincial is calculated using the solution for the other ratings '''
-        for rating in ['corporateBBB', 'corporateA', 'Federal', 'corporateAAA_AA', 'Provincial']:
-
-            ''' The mortgage portfolios only include Federal and CorporateBBB, and the private doesn't include Fedearl or Provincial. Those cases are excluded from the optimization'''
-            if ((asset_type == 'mortgage') & ((rating == 'corporateAAA_AA') or (rating == 'corporateA') or (rating == 'Provincial'))) or ((asset_type == 'private') & ((rating == 'Federal') or (rating == 'Provincial'))):
-                continue
-
-            ''' The following cases do not run through the optimizer '''
-            if (asset_type == 'public'):
-                if ((portfolio == 'np') or (portfolio == 'ul') or (portfolio == 'Payout')):
-                    ''' CorporateBBB for Nonpar, Universal and Payout is not optimized. Buckets 3-6 are distributed according to the pre-determined weights to reduce concentration after buckets 1 and 2 are made.
-                    CorporateA bonds are also not optimized for Nonpar and Universal - minimum amount is placed in buckets 1 and 2 and remaining is placed in bucket 6'''
-                    if (rating == 'corporateBBB') or ((rating == 'corporateA') & (portfolio != 'Payout')):
-                        ''' First get the amount to be placed in the first 2 buckets'''
-                        bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio])) # Looks at a single column for each segment (?)
-                        new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                        new_row_df.iloc[0, 0] = bnds[0][0]
-                        new_row_df.iloc[0, 1] = bnds[1][0]
-                        if (rating == 'corporateBBB'):
-                            ''' For corporateBBB, follow the weight distribution'''
-                            new_row_df.iloc[0, 2:] = [val * (1 - new_row_df.iloc[0, 0:2].sum()) for val in [0.1549, 0.2566, 0.4351, 0.1534]]
-
-                        elif (rating == 'corporateA'):
-                            ''' For corporateA, place remaining weight in bucket 6'''
-                            new_row_df.iloc[0, 5] = 1 - new_row_df.iloc[0, 0:2].sum()
-                        ''' Then add the row to the df'''
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-                elif (portfolio == 'Total'):
-                    ''' CorporateAAA_AA and Federal in the Total portfolio are not optimized, the remaining investment allocation goes to bucket 6 for Federal, and bucket 1 for CorporateAAA_AA '''
-                    if ((rating == 'corporateAAA_AA')):
-
-                        ''' First we get the starting point already calculated by the optimizer for the 5 portfolios '''
-                        total_bnds = helpers.get_bnds_for_total(Asset_mix2, solution_df) # Change Asset_mix to Asset_mix2 so it works here (* to make totals work)
-                        # old: Asset_mix - Brenda
-                        new_row_df = total_bnds.loc[[rating]].reset_index(drop=True)
-                        new_row_df.iloc[0, 0] = 1 - sum(new_row_df.iloc[0, 1:])
-
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-
-            ''' First grab the KRDs of the assets of the corresponding rating '''
-            krd = KRDs[KRDs['rating'] == rating]
-            krd = krd.reset_index().drop(krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-            ''' The get the allocated investment amount for the current bond rating and portfolio'''
-            investment_val = Asset_mix[portfolio].loc[rating] / 10000
-            ''' If zero, add a blank row to the solution_df '''
-            if investment_val == 0:
-                new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                new_row_df['portfolio'] = portfolio
-                new_row_df['rating'] = rating
-                solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                continue
-
-            hedge_ratio = 1
-            ''' Get the target sensitivities for the current rating , then use the invetment value and hedge ratio to generate the final target used in the optimization'''
-            target_prep = df_portfolio[df_portfolio['rating'] == rating].drop(df_portfolio.columns[[0, 1]], axis=1)
-
-
-            target = (target_prep) / investment_val
-            target = target.to_numpy()[0]
-            target = target.T*-1
-
-            """ For Test Purposes (target krds without dividing by investment values)"""
-            krd_target = (target_prep * hedge_ratio)
-            krd_target = krd_target.to_numpy()[0]
-            krd_target = krd_target.T * -1
-
-            ''' The target sensitivities for provincial assets in the total portfolio are the remainder from the total target minus the solved sensitivities for the other bond ratings '''
-            if (portfolio == 'Total') & (rating == 'Provincial'):
-
-                ''' first calculate the solved dollar sensitivities for all the other ratings by multiplying the solved weights by the krds and the investment value '''
-                for bond_rating in ['corporateBBB', 'Federal', 'corporateAAA_AA', 'corporateA']:
-                    ''' Getting the KRDs '''
-                    bond_krd = KRDs[KRDs['rating'] == bond_rating]
-                    bond_krd = bond_krd.reset_index().drop(bond_krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-                    ''' Getting the solved weights from solution_df '''
-                    weights = solution_df.loc[(solution_df['portfolio'] == 'Total') & (solution_df['rating'] == bond_rating)].drop(columns={'portfolio', 'rating'}).to_numpy().reshape(-1, 1)
-
-                    ''' Getting the total amount allocated for the rating '''
-                    investment = Asset_mix['Total'].loc[bond_rating]/10000
-
-                    ''' calculating the solved sensitivity then adding it as a column in the solved sensitivity df '''
-                    solved_sensitivity = np.dot(bond_krd, weights) * investment
-                    solved_dollar_sensitivities[bond_rating] = solved_sensitivity[:, 0]
-
-                ''' The sum of all columns is subtracted from the total target sensitivities to obtain the provincial target sensitivities '''
-                solved_dollar_sensitivities['Total - prov'] = solved_dollar_sensitivities.sum(axis=1)
-                target_prep = df_portfolio[df_portfolio['rating'] == 'Total'].drop(df_portfolio.columns[[0, 1]], axis=1)
-                target_prep = target_prep.iloc[0].reset_index(drop=True) + solved_dollar_sensitivities['Total - prov']
-
-                ''' Applying the same procedure to the target like all previous sensitivity targets - 
-                multiplying by the hedge ratio (95%) and dividing by the investment value, then transposing'''
-                target = (target_prep * hedge_ratio) / investment_val
-                target = target.to_numpy()
-                target = target * -1
-
-                """ For Test Purposes (target krds without dividing by investment values)"""
-                krd_target = (target_prep * hedge_ratio)
-                krd_target = krd_target.to_numpy()
-                krd_target = krd_target.T * -1
-
-
-            # for testing
-            krd_targets[f"{portfolio}_{rating}"] = krd_target
-            # print(krd_targets)
-            # print(asset_type)
-
-            ''' the objective of the optimizer is to minimize the difference 
-            between the target sensitivities and the calculated sensitivities'''
-            def objective(x):
-                c = np.multiply(x, krd)
-                temp = c.sum(axis=1) - target
-                return np.dot(temp.T, temp)
-
-            ''' for the total portfolio, the objective is to maximize expected return, 
-            so it uses a different objective in the optimization'''
-            def objective_total(x):
-                c = np.multiply(x, expected_return.loc[rating].to_numpy().reshape(1, -1))
-                d = -c.sum(axis=1)[0]
-                return d
-
-            ''' for corporateBBB bonds - used in the constraints'''
-            corpBBBweights = [0.1627, 0.2669, 0.4079, 0.1625]
-            corpBBBratios = np.divide(corpBBBweights, corpBBBweights[0])
-
-
-
-            ''' Setting constraints for the optimizer - corporateBBB uses 
-            different constrants using the ratios calculated above to reduce concentration'''
-            if (rating == "corporateBBB") & (asset_type != 'mortgage'):
-               cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                        {'type': 'eq', 'fun': lambda x: x[3] - corpBBBratios[1] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[4] - corpBBBratios[2] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[5] - corpBBBratios[3] * x[2]})
-            else:
-                cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))    ) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-
-
-            x0 = [1, 0, 0, 0, 0, 0]
-
-            ''' Setting the boundaries for the optimizer this varies based on portfolio and bond rating '''
-            if (asset_type == 'public') & ((portfolio == 'ul') or (portfolio == 'np')):
-                ''' Universal and Nonpar are allowed to hold negative amounts for buckets one and 2, the exact amount is calculated using the IFE Estimates file'''
-                bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio]))
-            elif (portfolio == 'Total') & (rating != 'corporateAAA_AA'):
-                ''' For the Total, the bounds used are based on the solved amounts. The sum of the solved amounts for each portfolio is used as a starting point for the remainder of the total to be optimized'''
-                bnds = []
-
-                # Brenda (*begin)
-
-                total_bnds = helpers.get_bnds_for_total(Asset_mix2, solution_df) # insert reading assetmix2 here
-
-                # Brenda (*end)
-                # total_bnds = helpers.get_bnds_for_total(Asset_mix, solution_df) # insert reading assetmix2 here - brenda commented out for now (temporary)
-                for x in total_bnds.loc[rating]:
-                    bnds.append([x, 1])
-            elif (rating == "corporateAAA_AA"):
-                ''' No corporateAAA_AA bonds in buckets 3 and 4 and 6, so bounds are set to zero for those buckets '''
-                bnds = ((0, 1), (0, 1), (0, 0), (0, 0), (0, 1), (0, 0))
-                x0 = [1, 0, 0, 0, 0, 0]
-            else:
-                bnds = [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]]
-
-
-
-# is the issue here?
-            if portfolio == 'Total':
-                ''' Uses a different x0 because [0, 0, 0, 0, 0, 1] is sometimes out of bounds and it gives an incorrect solution '''
-                sumofbnds = 1 - bnds[0][0] - bnds[1][0] - bnds[2][0] - bnds[3][0] - bnds[4][0] - bnds[5][0]
-                x0 = [bnds[0][0], bnds[1][0], bnds[2][0], bnds[3][0], bnds[4][0], bnds[5][0] + sumofbnds]
-                # solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-                solution = minimize(objective_total, x0, method='SLSQP', bounds=bnds, constraints=cons)
-            else:
-                solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-
-            if solution.success:
-                misc.log('Successful optimization for ' + rating + ' bonds in ' + portfolio, LOGFILE)
-
-            ''' Append the solved weights to the solution_df '''
-            new_row_df = pd.DataFrame(solution.x).T
-            new_row_df['portfolio'] = portfolio
-            new_row_df['rating'] = rating
-            solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-
-    # Test output for krd targets
-    if asset_type == 'public':
-        krd_targets.to_clipboard()
-
-    ''' Create the liability table using the results of the optimization, and add it to the end of the solution_df'''
-    liabilities = helpers.liabilities_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, liabilities], ignore_index=True)
-
-    ''' repeat for the surplus table, append to the end of the solution_df'''
-    surplus_table = helpers.surplus_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, surplus_table], ignore_index=True)
-
-    ''' Rounds the solution to 4 decimals'''
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(4)
-
-    # print(solution_df)
-    # print(asset_type)
-
-    return solution_df
-
-def optimization_b(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):  # default sheet_version is segments (1)
-
-#def optimization(given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
-
-    KRDs = reading_asset_KRDs(given_date)
-    if curMonthBS:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS) #, sheet_version) # top
-    else:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date) #, False, sheet_version)
-        # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-    # reading_liabilities(given_date)
-
-
-    ''' Setting Asset_mix to the correct table based on the given asset class '''
-    if asset_type == 'private':
-        Asset_mix = df_private
-    elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages
-    else:
-        Asset_mix = df_public # For all
-
-
-    ''' Getting target sensitivities for all asset classes from the database '''
-    #get_target_sensitivities_query = """
-    #                SELECT *
-    #                FROM target_sensitivity
-    #                WHERE date= '{}'
-    #                """.format(over_under.date())
-    #get_col_names = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'target_sensitivity';'''
-    #col_names = [name[0] for name in execute_table_query(get_col_names, 'Benchmark', fetch=True)]
-    #df = pd.DataFrame(execute_table_query(get_target_sensitivities_query, 'Benchmark', fetch=True), columns=col_names)
-
-
-
-    #df['rating'] = df['rating'].replace(
-    #    {'FEDERAL': 'Federal', 'CorpBBB': 'corporateBBB', 'PROVINCIAL': 'Provincial', 'CorpA': 'corporateA',
-    #     'CorpAAA_AA': 'corporateAAA_AA', 'CorpBB_B': 'corporateBB_B'})
-    #df = df.drop('70Y', axis=1)
-
-
-
-    ''' Separating the db values into 3 tables, one for each asset class '''
-    private_sensitivity = helpers.private_sensitivities().set_index(['portfolio', 'rating'])
-    mortgage_sensitivity = helpers.mortgage_sensitivities().set_index(['portfolio', 'rating'])
-
-
-    ''' Setting the sensitivities to be used as targets for the optimizer, for the correct asset class'''
-    if asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    else:
-        ''' For the public optimization, we subtract the private and mortgage target sensitivities from the public target and optimize for the net sensitivity '''
-        net_sensitivity = helpers.public_sensitivities()
-
-
-
-
-    ''' For the sensitivity targets for the public totals, we subtract the public and mortgage components of all ratings
-    we sum the public sensitivities for all 5 portfolios, then subtract the sum of privates for all portfolios, including ParCSM and Surplus'''
-    if asset_type == 'public':
-        net_sensitivity = helpers.public_sensitivities()
-    elif asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-
-
-
-    solution_df = pd.DataFrame()
-    solved_dollar_sensitivities = pd.DataFrame()
-
-    # df for targets (test output)
-    krd_targets = pd.DataFrame()
-
-    ''' This df is a table of expected returns taken from the Parallel_tilt_curve_history'''
-    expected_return = helpers.get_expected_returns()
-
-# Optimize total first
-# and then segments
-    ''' start the optimization process for each portfolio'''
-    for portfolio in ['ul', 'Payout', 'Accum', 'group', 'np', 'Total']:
-
-        ''' first get the target sensitivities from the df generated above for the current portfolio '''
-        df_portfolio = net_sensitivity[net_sensitivity['portfolio'] == portfolio]
-
-
-        ''' Next, go through each rating class to optimize for each. Calculate provinical last because the target 
-        for total-provincial is calculated using the solution for the other ratings '''
-        for rating in ['corporateBBB', 'corporateA', 'Federal', 'corporateAAA_AA', 'Provincial']:
-
-            ''' The mortgage portfolios only include Federal and CorporateBBB, and the private doesn't include Fedearl or Provincial. Those cases are excluded from the optimization'''
-            if ((asset_type == 'mortgage') & ((rating == 'corporateAAA_AA') or (rating == 'corporateA') or (rating == 'Provincial'))) or ((asset_type == 'private') & ((rating == 'Federal') or (rating == 'Provincial'))):
-                continue
-
-            ''' The following cases do not run through the optimizer '''
-            if (asset_type == 'public'):
-                if ((portfolio == 'np') or (portfolio == 'ul') or (portfolio == 'Payout')):
-                    ''' CorporateBBB for Nonpar, Universal and Payout is not optimized. Buckets 3-6 are distributed according to the pre-determined weights to reduce concentration after buckets 1 and 2 are made.
-                    CorporateA bonds are also not optimized for Nonpar and Universal - minimum amount is placed in buckets 1 and 2 and remaining is placed in bucket 6'''
-                    if (rating == 'corporateBBB') or ((rating == 'corporateA') & (portfolio != 'Payout')):
-                        ''' First get the amount to be placed in the first 2 buckets'''
-                        bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio])) # Looks at a single column for each segment (?)
-                        new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                        new_row_df.iloc[0, 0] = bnds[0][0]
-                        new_row_df.iloc[0, 1] = bnds[1][0]
-                        if (rating == 'corporateBBB'):
-                            ''' For corporateBBB, follow the weight distribution'''
-                            new_row_df.iloc[0, 2:] = [val * (1 - new_row_df.iloc[0, 0:2].sum()) for val in [0.1549, 0.2566, 0.4351, 0.1534]]
-
-                        elif (rating == 'corporateA'):
-                            ''' For corporateA, place remaining weight in bucket 6'''
-                            new_row_df.iloc[0, 5] = 1 - new_row_df.iloc[0, 0:2].sum()
-                        ''' Then add the row to the df'''
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-                elif (portfolio == 'Total'):
-                    ''' CorporateAAA_AA and Federal in the Total portfolio are not optimized, the remaining investment allocation goes to bucket 6 for Federal, and bucket 1 for CorporateAAA_AA '''
-                    if ((rating == 'corporateAAA_AA')):
-
-                        ''' First we get the starting point already calculated by the optimizer for the 5 portfolios '''
-                        total_bnds = helpers.get_bnds_for_total(Asset_mix, solution_df) # Change Asset_mix to Asset_mix2 so it works here (* to make totals work)
-
-                        new_row_df = total_bnds.loc[[rating]].reset_index(drop=True)
-                        new_row_df.iloc[0, 0] = 1 - sum(new_row_df.iloc[0, 1:])
-
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-
-            ''' First grab the KRDs of the assets of the corresponding rating '''
-            krd = KRDs[KRDs['rating'] == rating]
-            krd = krd.reset_index().drop(krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-            ''' The get the allocated investment amount for the current bond rating and portfolio'''
-            investment_val = Asset_mix[portfolio].loc[rating] / 10000
-            ''' If zero, add a blank row to the solution_df '''
-            if investment_val == 0:
-                new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                new_row_df['portfolio'] = portfolio
-                new_row_df['rating'] = rating
-                solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                continue
-
-            hedge_ratio = 1
-            ''' Get the target sensitivities for the current rating , then use the invetment value and hedge ratio to generate the final target used in the optimization'''
-            target_prep = df_portfolio[df_portfolio['rating'] == rating].drop(df_portfolio.columns[[0, 1]], axis=1)
-
-
-            target = (target_prep) / investment_val
-            target = target.to_numpy()[0]
-            target = target.T*-1
-
-            """ For Test Purposes (target krds without dividing by investment values)"""
-            krd_target = (target_prep * hedge_ratio)
-            krd_target = krd_target.to_numpy()[0]
-            krd_target = krd_target.T * -1
-
-            ''' The target sensitivities for provincial assets in the total portfolio are the remainder from the total target minus the solved sensitivities for the other bond ratings '''
-            if (portfolio == 'Total') & (rating == 'Provincial'):
-
-                ''' first calculate the solved dollar sensitivities for all the other ratings by multiplying the solved weights by the krds and the investment value '''
-                for bond_rating in ['corporateBBB', 'Federal', 'corporateAAA_AA', 'corporateA']:
-                    ''' Getting the KRDs '''
-                    bond_krd = KRDs[KRDs['rating'] == bond_rating]
-                    bond_krd = bond_krd.reset_index().drop(bond_krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-                    ''' Getting the solved weights from solution_df '''
-                    weights = solution_df.loc[(solution_df['portfolio'] == 'Total') & (solution_df['rating'] == bond_rating)].drop(columns={'portfolio', 'rating'}).to_numpy().reshape(-1, 1)
-
-                    ''' Getting the total amount allocated for the rating '''
-                    investment = Asset_mix['Total'].loc[bond_rating]/10000
-
-                    ''' calculating the solved sensitivity then adding it as a column in the solved sensitivity df '''
-                    solved_sensitivity = np.dot(bond_krd, weights) * investment
-                    solved_dollar_sensitivities[bond_rating] = solved_sensitivity[:, 0]
-
-                ''' The sum of all columns is subtracted from the total target sensitivities to obtain the provincial target sensitivities '''
-                solved_dollar_sensitivities['Total - prov'] = solved_dollar_sensitivities.sum(axis=1)
-                target_prep = df_portfolio[df_portfolio['rating'] == 'Total'].drop(df_portfolio.columns[[0, 1]], axis=1)
-                target_prep = target_prep.iloc[0].reset_index(drop=True) + solved_dollar_sensitivities['Total - prov']
-
-                ''' Applying the same procedure to the target like all previous sensitivity targets - 
-                multiplying by the hedge ratio (95%) and dividing by the investment value, then transposing'''
-                target = (target_prep * hedge_ratio) / investment_val
-                target = target.to_numpy()
-                target = target * -1
-
-                """ For Test Purposes (target krds without dividing by investment values)"""
-                krd_target = (target_prep * hedge_ratio)
-                krd_target = krd_target.to_numpy()
-                krd_target = krd_target.T * -1
-
-
-            # for testing
-            krd_targets[f"{portfolio}_{rating}"] = krd_target
-            # print(krd_targets)
-            # print(asset_type)
-
-            ''' the objective of the optimizer is to minimize the difference 
-            between the target sensitivities and the calculated sensitivities'''
-            def objective(x):
-                c = np.multiply(x, krd)
-                temp = c.sum(axis=1) - target
-                return np.dot(temp.T, temp)
-
-            ''' for the total portfolio, the objective is to maximize expected return, 
-            so it uses a different objective in the optimization'''
-            def objective_total(x):
-                c = np.multiply(x, expected_return.loc[rating].to_numpy().reshape(1, -1))
-                d = -c.sum(axis=1)[0]
-                return d
-
-            ''' for corporateBBB bonds - used in the constraints'''
-            corpBBBweights = [0.1627, 0.2669, 0.4079, 0.1625]
-            corpBBBratios = np.divide(corpBBBweights, corpBBBweights[0])
-
-
-
-            ''' Setting constraints for the optimizer - corporateBBB uses 
-            different constrants using the ratios calculated above to reduce concentration'''
-            if (rating == "corporateBBB") & (asset_type != 'mortgage'):
-               cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                        {'type': 'eq', 'fun': lambda x: x[3] - corpBBBratios[1] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[4] - corpBBBratios[2] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[5] - corpBBBratios[3] * x[2]})
-            else:
-                cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))    ) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-
-
-            x0 = [1, 0, 0, 0, 0, 0]
-
-            ''' Setting the boundaries for the optimizer this varies based on portfolio and bond rating '''
-            if (asset_type == 'public') & ((portfolio == 'ul') or (portfolio == 'np')):
-                ''' Universal and Nonpar are allowed to hold negative amounts for buckets one and 2, the exact amount is calculated using the IFE Estimates file'''
-                bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio]))
-            elif (portfolio == 'Total') & (rating != 'corporateAAA_AA'):
-                ''' For the Total, the bounds used are based on the solved amounts. The sum of the solved amounts for each portfolio is used as a starting point for the remainder of the total to be optimized'''
-                bnds = []
-                # Brenda (*begin)
-
-                # KRDs = reading_asset_KRDs(given_date)
-                if curMonthBS:
-                    df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date,
-                                                                            curMonthBS, 0)  # , sheet_version) # top
-                else:
-                    df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date, False, 0)  # , False, sheet_version)
-                    # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-                # reading_liabilities(given_date)
-
-                ''' Setting Asset_mix to the correct table based on the given asset class '''
-                if asset_type == 'private':
-                    Asset_mix2 = df_private2
-                elif asset_type == 'mortgage':
-                    Asset_mix2 = df_mortgages2
-                else:
-                    Asset_mix2 = df_public2
-
-                total_bnds = helpers.get_bnds_for_total(Asset_mix2, solution_df) # insert reading assetmix2 here
-
-                # Brenda (*end)
-                # total_bnds = helpers.get_bnds_for_total(Asset_mix, solution_df) # insert reading assetmix2 here - brenda commented out for now (temporary)
-                for x in total_bnds.loc[rating]:
-                    bnds.append([x, 1])
-            elif (rating == "corporateAAA_AA"):
-                ''' No corporateAAA_AA bonds in buckets 3 and 4 and 6, so bounds are set to zero for those buckets '''
-                bnds = ((0, 1), (0, 1), (0, 0), (0, 0), (0, 1), (0, 0))
-                x0 = [1, 0, 0, 0, 0, 0]
-            else:
-                bnds = [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]]
-
-
-
-# is the issue here?
-            if portfolio == 'Total':
-                ''' Uses a different x0 because [0, 0, 0, 0, 0, 1] is sometimes out of bounds and it gives an incorrect solution '''
-                sumofbnds = 1 - bnds[0][0] - bnds[1][0] - bnds[2][0] - bnds[3][0] - bnds[4][0] - bnds[5][0]
-                x0 = [bnds[0][0], bnds[1][0], bnds[2][0], bnds[3][0], bnds[4][0], bnds[5][0] + sumofbnds]
-                # solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-                solution = minimize(objective_total, x0, method='SLSQP', bounds=bnds, constraints=cons)
-            else:
-                solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-
-            if solution.success:
-                misc.log('Successful optimization for ' + rating + ' bonds in ' + portfolio, LOGFILE)
-
-            ''' Append the solved weights to the solution_df '''
-            new_row_df = pd.DataFrame(solution.x).T
-            new_row_df['portfolio'] = portfolio
-            new_row_df['rating'] = rating
-            solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-
-    # Test output for krd targets
-    if asset_type == 'public':
-        krd_targets.to_clipboard()
-
-    ''' Create the liability table using the results of the optimization, and add it to the end of the solution_df'''
-    liabilities = helpers.liabilities_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, liabilities], ignore_index=True)
-
-    ''' repeat for the surplus table, append to the end of the solution_df'''
-    surplus_table = helpers.surplus_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, surplus_table], ignore_index=True)
-
-    ''' Rounds the solution to 4 decimals'''
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(4)
-
-    # print(solution_df)
-    # print(asset_type)
-
-    return solution_df
 
 def optimization_worker(given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
 
@@ -1427,6 +684,7 @@ def optimization_worker(given_date, over_under, asset_type='public', swap=False,
 
     return solution_df
 
+
 def optimization(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
     sheet_version = 1 # segments
     sol_df_seg = optimization_worker(given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
@@ -1459,392 +717,59 @@ def optimization(given_date, over_under, asset_type='public', swap=False, curMon
     return sol_df
 
 
-# Brenda (*end of test)
-def optimization_orig(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):  # default sheet_version is segments (1)
-
-#def optimization(given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
-
-    KRDs = reading_asset_KRDs(given_date)
-    if curMonthBS:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS) #, sheet_version) # top
-    else:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date) #, False, sheet_version)
-        # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-    # reading_liabilities(given_date)
-
-
-    ''' Setting Asset_mix to the correct table based on the given asset class '''
-    if asset_type == 'private':
-        Asset_mix = df_private
-    elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages
-    else:
-        Asset_mix = df_public # For all
-
-
-    ''' Getting target sensitivities for all asset classes from the database '''
-    get_target_sensitivities_query = """
-                    SELECT *
-                    FROM target_sensitivity
-                    WHERE date= '{}' 
-                    """.format(over_under.date())
-    get_col_names = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'target_sensitivity';'''
-    col_names = [name[0] for name in execute_table_query(get_col_names, 'Benchmark', fetch=True)]
-    df = pd.DataFrame(execute_table_query(get_target_sensitivities_query, 'Benchmark', fetch=True), columns=col_names)
-
-
-
-    df['rating'] = df['rating'].replace(
-        {'FEDERAL': 'Federal', 'CorpBBB': 'corporateBBB', 'PROVINCIAL': 'Provincial', 'CorpA': 'corporateA',
-         'CorpAAA_AA': 'corporateAAA_AA', 'CorpBB_B': 'corporateBB_B'})
-    df = df.drop('70Y', axis=1)
-
-
-
-    ''' Separating the db values into 3 tables, one for each asset class '''
-    private_sensitivity = helpers.private_sensitivities().set_index(['portfolio', 'rating'])
-    mortgage_sensitivity = helpers.mortgage_sensitivities().set_index(['portfolio', 'rating'])
-
-
-    ''' Setting the sensitivities to be used as targets for the optimizer, for the correct asset class'''
-    if asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-        total_sensitivity = net_sensitivity
-
-    else:
-        ''' For the public optimization, we subtract the private and mortgage target sensitivities from the public target and optimize for the net sensitivity '''
-        net_sensitivity = helpers.public_sensitivities()
-
-
-
-
-    ''' For the sensitivity targets for the public totals, we subtract the public and mortgage components of all ratings
-    we sum the public sensitivities for all 5 portfolios, then subtract the sum of privates for all portfolios, including ParCSM and Surplus'''
-    if asset_type == 'public':
-        net_sensitivity = helpers.public_sensitivities()
-    elif asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities()
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities()
-
-
-
-    solution_df = pd.DataFrame()
-    solved_dollar_sensitivities = pd.DataFrame()
-
-    # df for targets (test output)
-    krd_targets = pd.DataFrame()
-
-    ''' This df is a table of expected returns taken from the Parallel_tilt_curve_history'''
-    expected_return = helpers.get_expected_returns()
-
-# Optimize total first
-# and then segments
-    ''' start the optimization process for each portfolio'''
-    for portfolio in ['ul', 'Payout', 'Accum', 'group', 'np', 'Total']:
-
-        ''' first get the target sensitivities from the df generated above for the current portfolio '''
-        df_portfolio = net_sensitivity[net_sensitivity['portfolio'] == portfolio]
-
-
-        ''' Next, go through each rating class to optimize for each. Calculate provinical last because the target 
-        for total-provincial is calculated using the solution for the other ratings '''
-        for rating in ['corporateBBB', 'corporateA', 'Federal', 'corporateAAA_AA', 'Provincial']:
-
-            ''' The mortgage portfolios only include Federal and CorporateBBB, and the private doesn't include Fedearl or Provincial. Those cases are excluded from the optimization'''
-            if ((asset_type == 'mortgage') & ((rating == 'corporateAAA_AA') or (rating == 'corporateA') or (rating == 'Provincial'))) or ((asset_type == 'private') & ((rating == 'Federal') or (rating == 'Provincial'))):
-                continue
-
-            ''' The following cases do not run through the optimizer '''
-            if (asset_type == 'public'):
-                if ((portfolio == 'np') or (portfolio == 'ul') or (portfolio == 'Payout')):
-                    ''' CorporateBBB for Nonpar, Universal and Payout is not optimized. Buckets 3-6 are distributed according to the pre-determined weights to reduce concentration after buckets 1 and 2 are made.
-                    CorporateA bonds are also not optimized for Nonpar and Universal - minimum amount is placed in buckets 1 and 2 and remaining is placed in bucket 6'''
-                    if (rating == 'corporateBBB') or ((rating == 'corporateA') & (portfolio != 'Payout')):
-                        ''' First get the amount to be placed in the first 2 buckets'''
-                        bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio])) # Looks at a single column for each segment (?)
-                        new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                        new_row_df.iloc[0, 0] = bnds[0][0]
-                        new_row_df.iloc[0, 1] = bnds[1][0]
-                        if (rating == 'corporateBBB'):
-                            ''' For corporateBBB, follow the weight distribution'''
-                            new_row_df.iloc[0, 2:] = [val * (1 - new_row_df.iloc[0, 0:2].sum()) for val in [0.1549, 0.2566, 0.4351, 0.1534]]
-
-                        elif (rating == 'corporateA'):
-                            ''' For corporateA, place remaining weight in bucket 6'''
-                            new_row_df.iloc[0, 5] = 1 - new_row_df.iloc[0, 0:2].sum()
-                        ''' Then add the row to the df'''
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-                elif (portfolio == 'Total'):
-                    ''' CorporateAAA_AA and Federal in the Total portfolio are not optimized, the remaining investment allocation goes to bucket 6 for Federal, and bucket 1 for CorporateAAA_AA '''
-                    if ((rating == 'corporateAAA_AA')):
-
-                        ''' First we get the starting point already calculated by the optimizer for the 5 portfolios '''
-                        total_bnds = helpers.get_bnds_for_total(Asset_mix, solution_df) # Change Asset_mix to Asset_mix2 so it works here (* to make totals work)
-
-                        new_row_df = total_bnds.loc[[rating]].reset_index(drop=True)
-                        new_row_df.iloc[0, 0] = 1 - sum(new_row_df.iloc[0, 1:])
-
-                        new_row_df['portfolio'] = portfolio
-                        new_row_df['rating'] = rating
-                        solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                        continue
-
-
-            ''' First grab the KRDs of the assets of the corresponding rating '''
-            krd = KRDs[KRDs['rating'] == rating]
-            krd = krd.reset_index().drop(krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-            ''' The get the allocated investment amount for the current bond rating and portfolio'''
-            investment_val = Asset_mix[portfolio].loc[rating] / 10000
-            ''' If zero, add a blank row to the solution_df '''
-            if investment_val == 0:
-                new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
-                new_row_df['portfolio'] = portfolio
-                new_row_df['rating'] = rating
-                solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-                continue
-
-            hedge_ratio = 1
-            ''' Get the target sensitivities for the current rating , then use the invetment value and hedge ratio to generate the final target used in the optimization'''
-            target_prep = df_portfolio[df_portfolio['rating'] == rating].drop(df_portfolio.columns[[0, 1]], axis=1)
-
-
-            target = (target_prep) / investment_val
-            target = target.to_numpy()[0]
-            target = target.T*-1
-
-            """ For Test Purposes (target krds without dividing by investment values)"""
-            krd_target = (target_prep * hedge_ratio)
-            krd_target = krd_target.to_numpy()[0]
-            krd_target = krd_target.T * -1
-
-            ''' The target sensitivities for provincial assets in the total portfolio are the remainder from the total target minus the solved sensitivities for the other bond ratings '''
-            if (portfolio == 'Total') & (rating == 'Provincial'):
-
-                ''' first calculate the solved dollar sensitivities for all the other ratings by multiplying the solved weights by the krds and the investment value '''
-                for bond_rating in ['corporateBBB', 'Federal', 'corporateAAA_AA', 'corporateA']:
-                    ''' Getting the KRDs '''
-                    bond_krd = KRDs[KRDs['rating'] == bond_rating]
-                    bond_krd = bond_krd.reset_index().drop(bond_krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
-
-                    ''' Getting the solved weights from solution_df '''
-                    weights = solution_df.loc[(solution_df['portfolio'] == 'Total') & (solution_df['rating'] == bond_rating)].drop(columns={'portfolio', 'rating'}).to_numpy().reshape(-1, 1)
-
-                    ''' Getting the total amount allocated for the rating '''
-                    investment = Asset_mix['Total'].loc[bond_rating]/10000
-
-                    ''' calculating the solved sensitivity then adding it as a column in the solved sensitivity df '''
-                    solved_sensitivity = np.dot(bond_krd, weights) * investment
-                    solved_dollar_sensitivities[bond_rating] = solved_sensitivity[:, 0]
-
-                ''' The sum of all columns is subtracted from the total target sensitivities to obtain the provincial target sensitivities '''
-                solved_dollar_sensitivities['Total - prov'] = solved_dollar_sensitivities.sum(axis=1)
-                target_prep = df_portfolio[df_portfolio['rating'] == 'Total'].drop(df_portfolio.columns[[0, 1]], axis=1)
-                target_prep = target_prep.iloc[0].reset_index(drop=True) + solved_dollar_sensitivities['Total - prov']
-
-                ''' Applying the same procedure to the target like all previous sensitivity targets - 
-                multiplying by the hedge ratio (95%) and dividing by the investment value, then transposing'''
-                target = (target_prep * hedge_ratio) / investment_val
-                target = target.to_numpy()
-                target = target * -1
-
-                """ For Test Purposes (target krds without dividing by investment values)"""
-                krd_target = (target_prep * hedge_ratio)
-                krd_target = krd_target.to_numpy()
-                krd_target = krd_target.T * -1
-
-
-            # for testing
-            krd_targets[f"{portfolio}_{rating}"] = krd_target
-            # print(krd_targets)
-            # print(asset_type)
-
-            ''' the objective of the optimizer is to minimize the difference 
-            between the target sensitivities and the calculated sensitivities'''
-            def objective(x):
-                c = np.multiply(x, krd)
-                temp = c.sum(axis=1) - target
-                return np.dot(temp.T, temp)
-
-            ''' for the total portfolio, the objective is to maximize expected return, 
-            so it uses a different objective in the optimization'''
-            def objective_total(x):
-                c = np.multiply(x, expected_return.loc[rating].to_numpy().reshape(1, -1))
-                d = -c.sum(axis=1)[0]
-                return d
-
-            ''' for corporateBBB bonds - used in the constraints'''
-            corpBBBweights = [0.1627, 0.2669, 0.4079, 0.1625]
-            corpBBBratios = np.divide(corpBBBweights, corpBBBweights[0])
-
-
-
-            ''' Setting constraints for the optimizer - corporateBBB uses 
-            different constrants using the ratios calculated above to reduce concentration'''
-            if (rating == "corporateBBB") & (asset_type != 'mortgage'):
-               cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                        {'type': 'eq', 'fun': lambda x: x[3] - corpBBBratios[1] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[4] - corpBBBratios[2] * x[2]},
-                        {'type': 'eq', 'fun': lambda x: x[5] - corpBBBratios[3] * x[2]})
-            else:
-                cons = ({'type': 'eq', 'fun': lambda x: sum(sum(np.multiply(x, krd))    ) - sum(target)},
-                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-
-
-            x0 = [1, 0, 0, 0, 0, 0]
-
-            ''' Setting the boundaries for the optimizer this varies based on portfolio and bond rating '''
-            if (asset_type == 'public') & ((portfolio == 'ul') or (portfolio == 'np')):
-                ''' Universal and Nonpar are allowed to hold negative amounts for buckets one and 2, the exact amount is calculated using the IFE Estimates file'''
-                bnds = helpers.calc_bounds(given_date, portfolio, sum(Asset_mix[portfolio]))
-            elif (portfolio == 'Total') & (rating != 'corporateAAA_AA'):
-                ''' For the Total, the bounds used are based on the solved amounts. The sum of the solved amounts for each portfolio is used as a starting point for the remainder of the total to be optimized'''
-                bnds = []
-                # Brenda (*begin)
-
-                # KRDs = reading_asset_KRDs(given_date)
-                if curMonthBS:
-                    df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date,
-                                                                            curMonthBS, 0)  # , sheet_version) # top
-                else:
-                    df_public2, df_private2, df_mortgages2 = reading_asset_mix(given_date, False, 0)  # , False, sheet_version)
-                    # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
-
-                # reading_liabilities(given_date)
-
-                ''' Setting Asset_mix to the correct table based on the given asset class '''
-                if asset_type == 'private':
-                    Asset_mix2 = df_private2
-                elif asset_type == 'mortgage':
-                    Asset_mix2 = df_mortgages2
-                else:
-                    Asset_mix2 = df_public2
-
-                total_bnds = helpers.get_bnds_for_total(Asset_mix2, solution_df) # insert reading assetmix2 here
-
-                # Brenda (*end)
-                # total_bnds = helpers.get_bnds_for_total(Asset_mix, solution_df) # insert reading assetmix2 here - brenda commented out for now (temporary)
-                for x in total_bnds.loc[rating]:
-                    bnds.append([x, 1])
-            elif (rating == "corporateAAA_AA"):
-                ''' No corporateAAA_AA bonds in buckets 3 and 4 and 6, so bounds are set to zero for those buckets '''
-                bnds = ((0, 1), (0, 1), (0, 0), (0, 0), (0, 1), (0, 0))
-                x0 = [1, 0, 0, 0, 0, 0]
-            else:
-                bnds = [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]]
-
-
-
-# is the issue here?
-            if portfolio == 'Total':
-                ''' Uses a different x0 because [0, 0, 0, 0, 0, 1] is sometimes out of bounds and it gives an incorrect solution '''
-                sumofbnds = 1 - bnds[0][0] - bnds[1][0] - bnds[2][0] - bnds[3][0] - bnds[4][0] - bnds[5][0]
-                x0 = [bnds[0][0], bnds[1][0], bnds[2][0], bnds[3][0], bnds[4][0], bnds[5][0] + sumofbnds]
-                # solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-                solution = minimize(objective_total, x0, method='SLSQP', bounds=bnds, constraints=cons)
-            else:
-                solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
-
-            if solution.success:
-                misc.log('Successful optimization for ' + rating + ' bonds in ' + portfolio, LOGFILE)
-
-            ''' Append the solved weights to the solution_df '''
-            new_row_df = pd.DataFrame(solution.x).T
-            new_row_df['portfolio'] = portfolio
-            new_row_df['rating'] = rating
-            solution_df = pd.concat([new_row_df, solution_df], ignore_index=True)
-
-    # Test output for krd targets
-    if asset_type == 'public':
-        krd_targets.to_clipboard()
-
-    ''' Create the liability table using the results of the optimization, and add it to the end of the solution_df'''
-    liabilities = helpers.liabilities_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, liabilities], ignore_index=True)
-
-    ''' repeat for the surplus table, append to the end of the solution_df'''
-    surplus_table = helpers.surplus_table(Asset_mix, solution_df)
-    solution_df = pd.concat([solution_df, surplus_table], ignore_index=True)
-
-    ''' Rounds the solution to 4 decimals'''
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(4)
-
-    # print(solution_df)
-    # print(asset_type)
-
-    return solution_df
-
-def get_user_info():
+def get_user_info():  # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
     """
-    Gets command-line info from User.
+    Retrieves command-line arguments and converts them to usable date objects.
+
+    Returns:
+    Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]: 
+        - args: Parsed command-line arguments.
+        - GivenDate: The date for the optimization (current date if not provided).
+        - OU_Date: The over/under date for liabilities (defaults to GivenDate if not provided).
     """
-    # Gets Parser:
     parser = argparse.ArgumentParser(description="Portfolio Optimization Tool")
-    # Uses current date for both if not given:
-    parser.add_argument("-d", "--GivenDate", type=str,
-                        help="Use YYYY-MM-DD to set the Date for the calculation.")
-    parser.add_argument("-o", "--OU_Date", type=str,
-                        help="Use YYYY-MM-DD to use specific over_under_assetting file")
-    parser.add_argument('-c', '--create', action='store_true', help='include this if the liabilities for the selected date have not yet been uploaded to the db')
-
-    # Optional for tests (benchmarking.py):
+    parser.add_argument("-d", "--GivenDate", type=str, help="Use YYYY-MM-DD to set the Date for the calculation.")
+    parser.add_argument("-o", "--OU_Date", type=str, help="Use YYYY-MM-DD to use specific over_under_assetting file")
+    parser.add_argument('-c', '--create', action='store_true', help='Include this if the liabilities for the selected date have not yet been uploaded to the db')
+    
+    # Optional for specific outputs (mortgages, publics, privates)
     parser.add_argument("-m", "--mortgage", action='store_true', help="Include to generate output for mortgages, or leave all 3 blank to do all 3")
     parser.add_argument("-pb", "--public", action='store_true', help="Include to generate output for publics, or leave all 3 blank to do all 3")
     parser.add_argument("-pv", "--private", action='store_true', help="Include to generate output for privates, or leave all 3 blank to do all 3")
-    # For benchmarking tables generator
-    # parser.add_argument('-s', '--swap', action='store_true',
-    #                    help="Set to true if interest rate swap sensitivities are backed out")
-    # parser.add_argument('-cb', '--curMonthBS', action='store_true',
-    #                    help='include to run economics with current month balance sheet instead of previous')
 
-    # Add debugging version to produce all tables:
-
-    #
-
-    # Assign args, GivenDate, OU_Date:
+    # Parse arguments
     args = parser.parse_args()
 
+    # Convert GivenDate or use current date
     if args.GivenDate is None:
-        GivenDate = dt.datetime.now() # Can use these as default arguments if desired
+        GivenDate = dt.datetime.now()
     else:
         GivenDate = conversions.YYYYMMDDtoDateTime(args.GivenDate)
 
+    # Convert OU_Date or default to GivenDate
     if args.OU_Date is None:
         OU_Date = conversions.YYYYMMDDtoDateTime(args.GivenDate)
     else:
         OU_Date = conversions.YYYYMMDDtoDateTime(args.OU_Date)
 
-    # Return function:
     return args, GivenDate, OU_Date
 
-def main(): # model_portfolio.py new version
 
+def main():  # model_portfolio.py new version
+    """
+    Main function to orchestrate the portfolio optimization process. 
+    It gathers user input, runs the appropriate optimizations, and saves the results.
+    """
     try:
+        # Retrieve user input
         args, GivenDate, OU_Date = get_user_info()
 
-        # ftse_data_cache = {}
+        misc.log(f'Starting run of: {GivenDate}', LOGFILE)
 
-        misc.log('Starting run of: ' + str(GivenDate), LOGFILE)
+        # Determine if all outputs need to be optimized
+        do_all = not (args.mortgage or args.public or args.private)
 
-        #if args.create:
-        #    misc.log('reading liabilities option selected', LOGFILE)
-        #    reading_liabilities(OU_Date)
-
-        do_all = False
-        if (args.mortgage == False) & (args.public == False) & (args.private == False):
-            do_all = True
-
+        # Optimize for mortgages, publics, and privates based on user input
         if args.mortgage or do_all:
             misc.log('Optimizing mortgages', LOGFILE)
             mort_solution = optimization(GivenDate, OU_Date, asset_type='mortgage')
