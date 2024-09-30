@@ -1,9 +1,26 @@
 {
-    "editor.fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
+    "editor.fontFamily": "'Fira Code Bold', 'JetBrains Mono Bold', monospace",
     "editor.fontSize": 14,
-    "editor.lineHeight": 22,
+    "editor.lineHeight": 24,
     "editor.letterSpacing": 0.5,
     "editor.formatOnSave": true,
     "terminal.integrated.fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
     "terminal.integrated.fontSize": 14,
+
+    "editor.fontLigatures": true,
+    "editor.tokenColorCustomizations": {
+        //"comments": "#6A9955",
+        //"strings": "#D69D85",
+        //"keywords": "#569CD6",
+        //"variables": "#CE9178",
+        //"functions": "#DCDCAA",
+        //"numbers": "#DCDCAA"
+        "comments": "#808080",  // Comments color
+        "strings": "#6A8759",  // String color
+        "keywords": "#CC7832",  // Keyword color
+        "functions": "#FFC66D",  // Function color
+        "numbers": "#6897BB",  // Number color
+        "variables": "#A9B7C6",  // Variables color
+    }
+    }
 }

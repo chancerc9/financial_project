@@ -44,41 +44,53 @@ General_cur = General_conn.con.cursor()
 
 # 1. Get bond curves and process (add half-year intervals, choose) - replaces get_bond_curves() and - functionality
 
-## USED FUNCTION ##
+## Beginning of code ##
 
-def get_bond_curves(GivenDate):
+def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     """
-    Function to calculate bond curves from the database, based on a given date
-    """
+    Retrieves and processes bond curves from the database for a given date. Bond curves remain annual curves as current.
 
-    # Returns bond curves from pgadmin as a dataframe:
-    get_bond_curves_query = """
+    Parameters:
+    GivenDate (datetime): The date for which bond curves are retrieved.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing processed bond curves with selected bond types.
+    """
+    # SQL query to retrieve bond curve data from the database for the given date
+    get_bond_curves_query = f"""
                     SELECT *
                     FROM bondcurves_byterm
-                    WHERE date= '{}' 
-                    """.format(GivenDate.date())
+                    WHERE date= '{GivenDate.date()}' 
+                    """
+    
+    # Query to retrieve column names from the bond curves table
     get_column_names_query = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'bondcurves_byterm';'''
     col_names = [name[0] for name in execute_table_query(get_column_names_query, 'General', fetch=True)]
+
+    # Execute the query and create a DataFrame with the result
     df = pd.DataFrame(execute_table_query(get_bond_curves_query, 'General', fetch=True), columns=col_names)
 
-    # Cleaning up df to only have the curves we want; for all available years of data
+    # Clean the DataFrame by removing unnecessary columns and transposing it
     df.set_index('name', inplace=True)
     df.drop(['date', 'curvetype'], axis=1, inplace=True)
     df = df.transpose()
     df.reset_index(inplace=True)
+
+    # Select and rename specific bond categories for further analysis
     df = df[['CANADA', 'Provincial', 'AAA & AA', 'A', 'BBB', 'Corporate']]
     df.rename(columns={'CANADA': 'Federal', 'AAA & AA': "CorporateAAA_AA", 'A': 'CorporateA', 'BBB': 'CorporateBBB'}, inplace=True)
+
+    # Shift and divide by 100 to normalize the rates
     df = df.shift()[1:]
-    df = df/100
+    df = df / 100
 
-    return df
+    return df  # Dataframe of bond curves for all years, per annum (IIRC)
 
-## USED FUNCTION ##
+
 def get_ftse_data(givenDate):
     """
     Function to get bond data from the FTSE universe
     """
-
     # Gets data from pgadmin and returns it as a dataframe
     get_bond_info_query = """
                     SELECT date, cusip, term, issuername, 
@@ -119,29 +131,44 @@ def get_ftse_data(givenDate):
 
     return df
 
-# code takes it, puts it into 70 buckets, figure out the coupons and the weights, and puts it back down to 6 buckts (*a) , to find assets to invest, and to match up to our sensitivities
+    # code takes it, puts it into 70 buckets, figure out the coupons and the weights, and puts it back down to 6 buckts (*a) , to find assets to invest, and to match up to our sensitivities
 
-## USED FUNCTION ##
-def create_bucketing_table():
-    """
-    Function to create bucketing table based on term intervals
 
-    i.e., making the table for bucket ranges for each term; ex: 0-1.5 for 1 yrs, 1.5-2.5 for 2 yrs, 2.5-4 for 3 yrs, etc.
+def create_bucketing_table() -> pd.DataFrame:
     """
-    d = {'Term': list(np.linspace(start=0.5, stop=35, num=70))} ## Previous 10 bucketing tables became 70 - Change #2
+    Creates a bucketing table with term intervals.
+
+    Returns:
+    pd.DataFrame: A DataFrame with term buckets and their respective lower and upper bounds.
+    """
+    # Create a DataFrame with term buckets ranging from 0.5 to 35 years (70 intervals)
+    d = {'Term': list(np.linspace(start=0.5, stop=35, num=70))}
     df = pd.DataFrame(data=d)
-    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(1))/2
+
+    # Calculate the lower and upper bounds for each bucket
+    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(1)) / 2
     df['Upper_Bound'] = df['Lower_Bound'].shift(-1)
+    
+    # Adjust the first and last bounds
     df.iloc[0, 1] = 0
-    df.iloc[69, 2] = 100
+    df.iloc[-1, 2] = 100
+
     return df
 
-## USED FUNCTION ##
-def create_weight_tables(ftse_data):
+
+
+def create_weight_tables(ftse_data: pd.DataFrame):
     """
-    Function to create weight tables for each rating based on subindex percentages
+    Creates weight tables for each bond rating based on subindex percentages.
+
+    Parameters:
+    ftse_data (pd.DataFrame): A DataFrame containing bond information from the FTSE universe.
+
+    Returns:
+    weight_dict (Dict[str, pd.DataFrame]): A dictionary of weight tables for each bond rating.
+    total_universe_weights (pd.DataFrame): A DataFrame with total market weights for each rating and term bucket.
     """
-    buckets = [1, 5.75, 10.75, 15.75, 20.75, 27.75, 35.25] # These 6 buckets here (*a) - where (*a) means new thingg
+    buckets = [1, 5.75, 10.75, 15.75, 20.75, 27.75, 35.25]  # Predefined term buckets
     weight_dict = {}
 
     total_universe_weights = pd.DataFrame(
@@ -149,51 +176,65 @@ def create_weight_tables(ftse_data):
         columns=list(range(1, 7)))
 
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        column_to_look_in = "RatingBucket"
-        if rating == 'Corporate':
-            column_to_look_in = "Sector"
-
+        column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"  # (*Brenda: more concise and clear - simple)
+        
+        # Create bucketing table
         df = create_bucketing_table()
+        
+         # Sum market weights within each bucket
         for x in range(6):
             lower_b = buckets[x]
-            upper_b = buckets[x+1]
-            column_name = str(lower_b) + " - " + str(upper_b)
+            upper_b = buckets[x + 1]
+            column_name = f"{lower_b} - {upper_b}"
 
-            # Sum market weights for securities within each bucket
+            # Calculate total market weight for the given rating and term bucket
             df[column_name] = df.apply(lambda row: ftse_data.loc[
                 (ftse_data[column_to_look_in] == rating) &
                 (ftse_data['TermPt'] < upper_b) &
                 (ftse_data['TermPt'] >= lower_b) &
                 (ftse_data['TermPt'] < row['Upper_Bound']) &
-                (ftse_data['TermPt'] > row['Lower_Bound']-0.0001)
+                (ftse_data['TermPt'] > row['Lower_Bound'] - 0.0001)
             ]['marketweight_noREITs'].sum(), axis=1)
 
             total_universe_weights.loc[rating, x + 1] = df[column_name].sum()
-            # Dividing by the sum of the column to get the weight as a percentage of the subindex
-            # i.e., to normalize weights by sum of the column
-            df[column_name] = df[column_name]/df[column_name].sum()
+            
+            # Dividing by the sum of the column to get the weight as a percentage of the subindex; ie,
+            # Normalize by the sum of market weights
+            df[column_name] = df[column_name] / df[column_name].sum()
 
         weight_dict[rating] = df
 
     return weight_dict, total_universe_weights
 
-## USED FUNCTION ##
-def create_general_shock_table():
+
+def create_general_shock_table() -> pd.DataFrame:
     """
-    Creates a general shock table as a dataframe to use for calculating shocks for each security type
+    Creates a general shock table to calculate shocks for each security type.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the shock values for different term buckets.
     """
     shock_size = 0.0001
     buckets = [0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 100]
-    df = pd.DataFrame(columns=buckets, index=list(np.linspace(start=0.5, stop=35, num=70))) # (*a) changed bucket size
-    df[0] = df.index
-    for i in range(1,11):
-        df[buckets[i]] = df.apply(lambda row: ((1 - (row[0] - buckets[i])/(buckets[i+1] - buckets[i]))*shock_size) if (row[0] <= buckets[i+1]) & (row[0] >= buckets[i])
-        else (((row[0] - buckets[i-1])/(buckets[i] - buckets[i-1])*shock_size) if (row[0] <= buckets[i]) & (row[0] >= buckets[i-1]) else 0), axis=1)
+    
+    # Create a DataFrame for shocks with 70 term intervals
+    df = pd.DataFrame(columns=buckets, index=list(np.linspace(start=0.5, stop=35, num=70)))
+    df[0] = df.index  # Initialize the first column with term points
+    
+    # Apply shock formula for each bucket
+    for i in range(1, 11):
+        df[buckets[i]] = df.apply(lambda row: (
+            (1 - (row[0] - buckets[i]) / (buckets[i + 1] - buckets[i])) * shock_size) 
+            if (buckets[i] <= row[0] <= buckets[i + 1]) 
+            else (((row[0] - buckets[i - 1]) / (buckets[i] - buckets[i - 1]) * shock_size) 
+                  if buckets[i - 1] <= row[0] <= buckets[i] else 0), axis=1)
+
+    # Drop the last bucket (100) as it is not needed
     df = df.drop(100, axis=1)
+    
     return df
 
 
-## USED FUNCTION ##
 # Interpolating for half-years - side-eff 1
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
@@ -255,75 +296,133 @@ def create_shock_tables(curves): # CURVES are BOND CURVES LOL
 ## USED FUNCTIONs ##
 
 # (*begin) Takes each year and looks at rating and FTSE universe (half-year would be from .25 to .75; up quarter year and down quarter year for half year, and so on for every year
+
+# Function to calculate the average coupon rate for a specific bond rating and year
+# It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
+# The average coupon is weighted by the market weight of the bond, excluding REITs.
 def calc_avg_coupon(year, rating, ftse_data):
-    # calculates the average coupon for all ratings based on ftse_data formatted like the output of get_ftse_data
+    """
+    calculates the average coupon for all ratings based on ftse_data formatted like the output of get_ftse_data
+    """
+    # Determine the column to filter by: "RatingBucket" for most bonds, "Sector" for "Corporate"
     column_to_look_in = "RatingBucket"
-    if rating == 'Corporate':
-        column_to_look_in = "Sector"
+    if rating == 'Corporate':  
+        column_to_look_in = "Sector"  # Corporate bonds are grouped by sector, not by rating
 
-    lower_bound = year - 0.25
-    upper_bound = year + 0.25
+    # Define the lower and upper bounds for filtering bonds around the specified year
+    lower_bound = year - 0.25  # Lower bound is a quarter year before the specified year
+    upper_bound = year + 0.25  # Upper bound is a quarter year after the specified year
 
-    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) & (ftse_data['TermPt'] < upper_bound) & (ftse_data['TermPt'] > (lower_bound - 0.001)) & (ftse_data['marketweight_noREITs'] > 0)]
+    # Filter the FTSE data to include only rows where:
+    # 1. The bond's rating or sector matches the specified rating
+    # 2. The bond's term (maturity date) falls within the specified bounds
+    # 3. The market weight excluding REITs is positive
+    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) & 
+                       (ftse_data['TermPt'] < upper_bound) & 
+                       (ftse_data['TermPt'] > (lower_bound - 0.001)) & 
+                       (ftse_data['marketweight_noREITs'] > 0)]
 
+    # If no matching bonds are found, return 0 for the average coupon rate
     if df.empty:
         avg_coupon = 0
     else:
-        avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df['mvai']).sum() / (df['marketweight_noREITs'] / df['mvai']).sum())/2
+        # Otherwise, calculate the weighted average coupon rate:
+        # 1. Multiply the market weight by the coupon rate and divide by the market value-adjusted interest (mvai).
+        # 2. Divide the sum of these weighted values by the sum of market weights/mvai.
+        avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df['mvai']).sum() / 
+                      (df['marketweight_noREITs'] / df['mvai']).sum()) / 2  # Divide by 2 to account for semi-annual coupons
 
+    # Return the calculated average coupon rate for the given rating and year
     return avg_coupon
 
+
+# Function to calculate the present value (PV) of bonds for a specific rating and year
+# It uses the FTSE data to filter bonds based on the rating and term and then calculates the PV.
 def calc_pv(year, rating, ftse_data):
+    # Determine the column to filter by: "RatingBucket" for most bonds, "Sector" for "Corporate"
     column_to_look_in = "RatingBucket"
-    if rating == 'Corporate':
-        column_to_look_in = "Sector"
+    if rating == 'Corporate':  
+        column_to_look_in = "Sector"  # Corporate bonds are grouped by sector
 
-    lower_bound = year - 0.25
-    upper_bound = year + 0.25
+    # Define the lower and upper bounds for filtering bonds around the specified year
+    lower_bound = year - 0.25  # Lower bound is a quarter year before the specified year
+    upper_bound = year + 0.25  # Upper bound is a quarter year after the specified year
 
-    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) & (ftse_data['TermPt'] < upper_bound) & (
-                ftse_data['TermPt'] > (lower_bound - 0.001)) & (ftse_data['marketweight_noREITs'] > 0)]
+    # Filter the FTSE data to include only rows where:
+    # 1. The bond's rating or sector matches the specified rating
+    # 2. The bond's term (maturity date) falls within the specified bounds
+    # 3. The market weight excluding REITs is positive
+    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) & 
+                       (ftse_data['TermPt'] < upper_bound) & 
+                       (ftse_data['TermPt'] > (lower_bound - 0.001)) & 
+                       (ftse_data['marketweight_noREITs'] > 0)]
 
+    # If no matching bonds are found, return 0 for the present value
     if df.empty:
         pv = 0
     else:
+        # Otherwise, calculate the present value (PV) by summing up the product of the market weight and the bond's 
+        # market value-adjusted interest (mvai), then dividing by the sum of the market weights.
         pv = (df['marketweight_noREITs'] * df['mvai']).sum() / df['marketweight_noREITs'].sum()
 
+    # Return the calculated present value for the given rating and year
     return pv
+
+
+### Begin
+
 ## USED FUNCTIONs ##
 
 # (*end)
 
 ## USED FUNCTION ##
 
+# Input: ftse_data - a DataFrame containing bond information.
+# Output: cf_dict - a dictionary of cashflow tables and their respective present values for each bond rating.
 def create_cf_tables(ftse_data):
-    # uses the average coupon rate to calculate annual cashflows for each rating type
-    cf_dict = {}
-    years = list(np.linspace(start=0.5, stop=35, num=70)) ## changing buckets from 10 to 70
-    buckets = list(np.linspace(start=0.5, stop=35, num=70))
-    df = pd.DataFrame(columns=years, index=buckets)
-    df.insert(0, 'Bucket', buckets)
-    df.insert(1, 'Principal', 100)
+        # uses the average coupon rate to calculate annual cashflows for each rating type
 
+    """
+    This function calculates annual cashflows for different bond rating types based on the FTSE data.
+    It creates a cashflow table for each rating and calculates the present value (PV) and coupon rates for each term bucket.
+    """
+
+    cf_dict = {}  # Dictionary to store cashflow tables for each rating
+    years = list(np.linspace(start=0.5, stop=35, num=70))  # Defining 70 time intervals (half-year buckets) from 0.5 to 35 years
+    buckets = list(np.linspace(start=0.5, stop=35, num=70))  # Same 70 term buckets
+
+    # Create an empty DataFrame with columns for each year and rows for each bucket
+    df = pd.DataFrame(columns=years, index=buckets)
+    df.insert(0, 'Bucket', buckets)  # Add a 'Bucket' column representing the term
+    df.insert(1, 'Principal', 100)  # Initialize with a default principal value of 100
+
+    # Iterate over each bond rating type to calculate the cashflows
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
 
-        df = pd.DataFrame(columns=years,index=buckets)
+        # Create a new DataFrame for each rating with similar structure
+        df = pd.DataFrame(columns=years, index=buckets)
         df.insert(0, 'Bucket', buckets)
-        df.insert(1, 'Principal', 100)
+        df.insert(1, 'Principal', 100)  # Principal is set to 100 for each bond
 
+        # Calculate present value (PV) and average coupon for each bucket
         df['PV'] = df.apply(lambda row: calc_pv(row['Bucket'], rating, ftse_data), axis=1)
         df['Coupon'] = df.apply(lambda row: calc_avg_coupon(row['Bucket'], rating, ftse_data), axis=1)
 
+        # Move the calculated 'Coupon' column to position 2, right after 'Principal'
         coupons = df.pop(df.columns[-1])
         df.insert(2, 'Coupon', coupons)
 
-        for col in np.linspace(start=0.5, stop=35, num=70): # change buckets to 70
-            df[col] = df.apply(lambda row: row['Coupon'] if row['Bucket'] > col else ((row['Coupon'] + row['Principal']) if row['Bucket'] == col else 0), axis=1)
+        # Calculate annual cashflows for each bucket based on the coupon and principal
+        for col in np.linspace(start=0.5, stop=35, num=70):  # For each term bucket
+            df[col] = df.apply(lambda row: row['Coupon'] if row['Bucket'] > col
+            else ((row['Coupon'] + row['Principal']) if row['Bucket'] == col else 0), axis=1)
 
-        cf_dict[rating] = df.iloc[:, :73]
-        cf_dict[rating + 'PV'] = df.iloc[:, 73]
+        # Store the resulting DataFrame in a dictionary keyed by the rating
+        cf_dict[rating] = df.iloc[:, :73]  # Store the cashflow table for the rating
+        cf_dict[rating + 'PV'] = df.iloc[:, 73]  # Store the present value in the dictionary as well
 
     return cf_dict
+
 
 # you can data transform it first
 # THEN do the code
@@ -432,82 +531,135 @@ def create_sensitivity_tables(cashflows, shocks): # CASHFLOWS table (cashflow se
     return sensitivities_dict"""
 ## (*end)
 
-def make_krd_table(weights, sensitivities):
+import pandas as pd
+from typing import Dict
+
     # makes the final KRD table based on sensitivities and market weight and puts it all together in one dataframe
+def make_krd_table(weights: Dict[str, pd.DataFrame], sensitivities: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Creates the final Key Rate Duration (KRD) table by combining market weights and cashflow sensitivities for each bond rating.
+
+    Parameters:
+    weights (Dict[str, pd.DataFrame]): A dictionary of DataFrames containing market weights for each bond rating and maturity bucket.
+    sensitivities (Dict[str, pd.DataFrame]): A dictionary of DataFrames containing sensitivities for each bond rating and maturity bucket.
+
+    Returns:
+    pd.DataFrame: A combined KRD table for all bond ratings and term buckets.
+    """
     KRDs = {}
     cols = ['rating', 'term', 'bucket1', 'bucket2', 'bucket3', 'bucket4', 'bucket5', 'bucket6']
     buckets = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30]
 
+    # Iterate over each bond rating to calculate KRD values
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
         df = pd.DataFrame(columns=cols, index=range(10))
-        df['term'] = buckets
-        df['rating'] = rating
+        df['term'] = buckets  # Assign bucket terms to the DataFrame
+        df['rating'] = rating  # Set bond rating
+
+        # Calculate KRD by multiplying sensitivities with market weights for each bucket
         for x in range(2, 8):
-            df.iloc[:, x] = df.apply(lambda row: (sensitivities[rating].loc[sensitivities[rating]['Bucket'] == row['term']].iloc[:, 1:].values[0] * weights[rating].iloc[:, (x+1)]).sum(), axis=1)
-        KRDs[rating] = df
-    df = pd.concat([KRDs['Federal'], KRDs['Provincial'], KRDs['CorporateAAA_AA'], KRDs['CorporateA'], KRDs['CorporateBBB'], KRDs['Corporate']], ignore_index=True)
+            df.iloc[:, x] = df.apply(lambda row: (
+                sensitivities[rating].loc[sensitivities[rating]['Bucket'] == row['term']].iloc[:, 1:].values[0] *
+                weights[rating].iloc[:, (x + 1)]
+            ).sum(), axis=1)
 
-    df.fillna(0, inplace=True)
-    return df
+        KRDs[rating] = df  # Store KRD DataFrame in the dictionary
+
+    # Concatenate all rating-specific KRD DataFrames into one final DataFrame
+    final_krd_df = pd.concat([KRDs['Federal'], KRDs['Provincial'], KRDs['CorporateAAA_AA'], 
+                              KRDs['CorporateA'], KRDs['CorporateBBB'], KRDs['Corporate']], ignore_index=True)
+
+    final_krd_df.fillna(0, inplace=True)  # Replace NaN values with 0
+    return final_krd_df
 
 
 
-def getBSPath(date):
+import os
+from datetime import datetime
+
+def getBSPath(date: datetime) -> str:
+    """
+    Generates the file path for the Segmented Balance Sheet (SBS) file based on the provided date.
+
+    Parameters:
+    date (datetime): The date for which to retrieve the SBS file path.
+
+    Returns:
+    str: The file path for the Segmented Balance Sheet file.
+    
+    Raises:
+    Exception: If the file path is not found.
+    """
     bsFileName = 'SEGMENTED BALANCE SHEET-{year}.xlsx'
     # bsPathRoot = '\\\\estorage.equitable.int\\pcshared\\Financial Reporting\\Segmented Balance Sheets\\'
     bsPathRoot = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking')
 
-    current_year_path = bsPathRoot + '\\' + bsFileName.format(year=date.strftime('%Y'))
-    prev_year = date.year - 1
-    prev_year_path = bsPathRoot + '\\' + bsFileName.format(year=str(prev_year))
+    # Construct paths for the current year and the previous year
+    current_year_path = os.path.join(bsPathRoot, bsFileName.format(year=date.strftime('%Y')))  # (*Brenda:) Removes the error if used on MacOS/Linux systems (uses OS.path.join over manual concatenation using Windows-assumed '\\')
+    prev_year_path = os.path.join(bsPathRoot, bsFileName.format(year=str(date.year - 1)))
 
+    # Check if the current year's file exists, else look in prior years' folder
     if os.path.exists(current_year_path):
         path = current_year_path
-    # elif os.path.exists(prev_year_path):
-    #     path = prev_year_path
     else:
-        path = bsPathRoot + '\\Prior Years\\' + date.strftime('%Y') + '\\' + bsFileName.format(year=date.strftime('%Y'))
+        path = os.path.join(bsPathRoot, 'Prior Years', date.strftime('%Y'), bsFileName.format(year=date.strftime('%Y')))
 
-    if os.path.exists(path):
-        return path
-    else:
-        raise Exception('Path not found: {0}'.format(path))
+    # Raise an exception if the file path doesn't exist
+    if not os.path.exists(path):
+        raise Exception(f'Path not found: {path}')  # (*Brenda: Shifted error messaging to be more consistent formatting)
+
+    return path
 
 
 
-def get_expected_returns():
+import pandas as pd
+import numpy as np
+from scipy import interpolate
+import openpyxl
+
+def get_expected_returns() -> pd.DataFrame:
+    """
+    Reads and interpolates expected bond returns from the "Parallel_tilt_curve_history.xlsx" file for various bond ratings and maturity terms.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the interpolated expected returns for different bond ratings and term assumptions.
+    """
     file_name = "Parallel_tilt_curve_history.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
     workbook = openpyxl.load_workbook(path_input, data_only=True, read_only=True)
 
     expected_returns = pd.DataFrame()
-
     ratings = ['Federal', 'Provincial', 'corporateAAA_AA', 'corporateA', 'corporateBBB']
+
+    # Read the expected return data for each bond rating
     for sheet in ['analysis_quarterly_RF', 'analysis_quarterly_prov', 'analysis_quarterly_AA', 'analysis_quarterly_A', 'analysis_quarterly_BBB']:
-        rownum = 27 if (sheet == 'analysis_quarterly_RF') else 22
+        rownum = 27 if sheet == 'analysis_quarterly_RF' else 22
         ws = workbook[sheet]
         data = ws.values
-        columns = next(data)[0:]
+        columns = next(data)
         df = pd.DataFrame(data, columns=columns)
-        returns = df.loc[rownum:rownum, 'term1': 'term30']
+        returns = df.loc[rownum:rownum, 'term1':'term30']
         expected_returns = pd.concat([expected_returns, returns], ignore_index=True)
+
+    # Assign bond ratings to the expected returns DataFrame
     expected_returns['ratings'] = ratings
     expected_returns.set_index('ratings', inplace=True)
 
+    # Term assumptions for interpolation
     term_assumptions = [2, 7, 12, 17, 23, 29]
     return_assumptions = pd.DataFrame(columns=[0, 1, 2, 3, 4, 5])
 
     x = [1, 2, 3, 4, 5, 7, 10, 20, 30]
+    # Interpolate expected returns for each rating across terms
     for rating in ratings:
         y = expected_returns.loc[rating].to_numpy()
-
         temp = interpolate.splrep(x, y, s=0)
         xnew = np.arange(1, 31)
         ynew = interpolate.splev(xnew, temp, der=0)
-
         return_assumptions.loc[rating] = ynew[term_assumptions]
 
-    return return_assumptions/100
+    return return_assumptions / 100  # Convert to percentage returns
+
 
 ## New fUNCTION to read in stuff (no need from balance sheet) - check it easier from the balance sheet, easier
 # helper function to read in from balance sheet (execel) not from the comapny blcsht its
@@ -529,52 +681,62 @@ def get_expected_returns():
 # what did i think and mention
 
 
-def BSTotals(given_date, sheet_version): # ask to say output (1 for segments, 0 for totals)
+from datetime import datetime
 
+def BSTotals(given_date: datetime, sheet_version: int) -> dict:
+    """
+    Retrieves the balance sheet totals from the "SBS Totals.xlsx" file based on the provided date.
+
+    Parameters:
+    given_date (datetime): The date for which the balance sheet totals are requested.
+    sheet_version (int): Determines if totals or segments are returned (1 for segments, 0 for totals).
+
+    Returns:
+    dict: A dictionary containing balance sheet totals for different categories.
+    """
     year = given_date.strftime("%Y")
     quarter = ((given_date.month - 1) // 3) + 1
-    year_quarter = year + "Q" + str(quarter)
+    year_quarter = f"{year}Q{quarter}"
 
     file_name = "SBS Totals.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
-    workbook = openpyxl.load_workbook(path_input, data_only = True)
-    # ws = workbook['2024Q1']
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
 
-    if sheet_version == 1: # 1 for segments, 0 for totals (better to name if_total, and have bool) - (*li)
-        ws = workbook[year_quarter]
-    else:
-        ws = workbook[year_quarter + ' (Total)']  # 0 for totals - (*li)
-
+    # Retrieve the appropriate worksheet based on sheet version
+    ws = workbook[year_quarter] if sheet_version == 1 else workbook[year_quarter + ' (Total)']
     data = ws.values
-    columns = next(data)[0:]
+    columns = next(data)
     df = pd.DataFrame(data, columns=columns)
-    totals = {
-        'ACCUM': 0,
-        'PAYOUT': 0,
-        'UNIVERSAL': 0,
-        'NONPAR': 0,
-        'GROUP': 0,
-        'PARCSM': 0,
-        'SEGFUNDS': 0,
-        'Surplus': 0,
-        'Total': 0
-    }
 
-    totals['ACCUM'] = df.loc[2,'ACCUM']
-    totals['PAYOUT'] = df.loc[2,'PAYOUT']
-    totals['UNIVERSAL'] = df.loc[2,'UNIVERSAL']
-    totals['NONPAR'] = df.loc[2,'NONPAR']
-    totals['GROUP'] = df.loc[2,'GROUP']
-    totals['PARCSM'] = df.loc[2,'PARCSM']
-    totals['SEGFUNDS'] = df.loc[2,'SEGFUNDS']
-    totals['Surplus'] = df.loc[2, 'Surplus']
-    totals['Total'] = df.loc[2, 'Total']
+    # Extract and return totals for relevant categories
+    totals = {
+        'ACCUM': df.loc[2, 'ACCUM'],
+        'PAYOUT': df.loc[2, 'PAYOUT'],
+        'UNIVERSAL': df.loc[2, 'UNIVERSAL'],
+        'NONPAR': df.loc[2, 'NONPAR'],
+        'GROUP': df.loc[2, 'GROUP'],
+        'PARCSM': df.loc[2, 'PARCSM'],
+        'SEGFUNDS': df.loc[2, 'SEGFUNDS'],
+        'Surplus': df.loc[2, 'Surplus'],
+        'Total': df.loc[2, 'Total']
+    } # rewrote BSTotals to reduce unecessary code / overwritten initializaitons
 
     return totals
 
 
-def percents(given_date, curMonthBS=False):
 
+
+def percents(given_date: datetime, curMonthBS: bool = False) -> pd.DataFrame:
+    """
+    Retrieves asset mix percentages from the "Mix_hardcoded.xlsx" file for the given date.
+
+    Parameters:
+    given_date (datetime): The date for which the asset mix percentages are requested.
+    curMonthBS (bool): If True, adjusts the quarter to the next one if applicable. Default is False.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing asset mix percentages for various bond ratings.
+    """
     year = given_date.strftime("%Y")
     quarter = ((given_date.month - 1) // 3) + 1
     if curMonthBS and quarter < 4:
@@ -584,122 +746,184 @@ def percents(given_date, curMonthBS=False):
     file_name = "Mix_hardcoded.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
     workbook = openpyxl.load_workbook(path_input)
-    # ws = workbook['2024Q1']
-    ws = workbook[year_quarter]
+    ws = workbook[year_quarter]  # i.e., ws = workbook['2024Q1']
+
     data = ws.values
-    columns = next(data)[0:]
-    df = pd.DataFrame(data, columns=columns)
-    df = df.set_index('rating')
-    print(year_quarter)
+    columns = next(data)
+    df = pd.DataFrame(data, columns=columns).set_index('rating')
+    
+    # Initialize surplus and SEGFUNDS columns
     df['Surplus'] = df['SEGFUNDS'] = 0
 
-    df = df.loc[['Public Federal',
-                 'Public Provincial',
-                 'Public Corporate - AA',
-                 'Public Corporate - A',
-                 'Public Corporate - BBB',
-                 'MortgagesInsured',
-                 'MortgagesConv',
-                 'PrivateAA',
-                 'PrivateA',
-                 'PrivateBBB',
-                 'PrivateBB_B']]
+    # Filter rows to include only relevant bond categories
+    df = df.loc[['Public Federal', 'Public Provincial', 'Public Corporate - AA', 'Public Corporate - A', 
+                 'Public Corporate - BBB', 'MortgagesInsured', 'MortgagesConv', 
+                 'PrivateAA', 'PrivateA', 'PrivateBBB', 'PrivateBB_B']]
 
-    df.rename({'Public Federal': 'Federal',
-               'Public Provincial': 'Provincial',
-               'Public Corporate - AA': 'CorpAAA_AA',
-               'Public Corporate - A': 'CorpA',
+    # Rename columns for readability
+    df.rename({'Public Federal': 'Federal', 'Public Provincial': 'Provincial', 
+               'Public Corporate - AA': 'CorpAAA_AA', 'Public Corporate - A': 'CorpA', 
                'Public Corporate - BBB': 'CorpBBB'}, inplace=True)
+    
     return df
 
-def solution_dollar_amounts(Asset_mix, solution_df):
-    weights = Asset_mix[['Accum', 'group', 'ul', 'Payout', 'np']].stack()
-    weights = weights.sort_index()
+from typing import Dict
+
+def solution_dollar_amounts(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates the dollar allocation for each bond rating across different portfolios based on the asset mix and solution data.
+
+    Parameters:
+    Asset_mix (pd.DataFrame): A DataFrame containing asset mix weights for different portfolios.
+    solution_df (pd.DataFrame): A DataFrame containing the solved portfolio allocations by rating.
+
+    Returns:
+    pd.DataFrame: A DataFrame with dollar allocations for each portfolio and rating.
+    """
+    weights = Asset_mix[['Accum', 'group', 'ul', 'Payout', 'np']].stack().sort_index()  # (*Brenda)
     weights2 = weights.reset_index(drop=True)
-    sols = solution_df[(solution_df['portfolio'] != 'Liability') & (solution_df['portfolio'] != 'Total')].set_index(['rating', 'portfolio'])
-    sols = sols.sort_index()
+    
+    # Filter the solution DataFrame to exclude 'Liability' and 'Total' portfolios
+    sols = solution_df[(solution_df['portfolio'] != 'Liability') & (solution_df['portfolio'] != 'Total')].set_index(['rating', 'portfolio']).sort_index()  # Python has great order-of-operations (*Brenda)
     sols2 = sols.reset_index(drop=True)
+    
+    # Calculate weighted dollar allocations
     w = sols2.mul(weights2, axis=0)
     w['rating'] = sols.reset_index()['rating']
     w['portfolio'] = sols.reset_index()['portfolio']
     w = w.set_index(['portfolio', 'rating'])
+
+    # Group by rating and sum for total allocation
     w_grouped = w.groupby('rating')
     for index, row in w_grouped:
         total_values = row.sum()
         total_values['rating'] = index
         total_values['portfolio'] = 'Total'
-        total_values = pd.DataFrame(total_values).T.set_index(['portfolio', 'rating'])
-        w = pd.concat([w, total_values])
-    w = w.reset_index()
-    return w
+        w = pd.concat([w, pd.DataFrame(total_values).T.set_index(['portfolio', 'rating'])])
 
-''' This function takes in the asset mix and the solved solution up to this point to calculate how much of the total allocation has been allocated in each portfolio. Those weights are used as bounds for the total optimization'''
-def get_bnds_for_total(Asset_mix, solution_df):
+    return w.reset_index()
+
+''' This function takes in the asset mix and the solved solution up to this point to calculate how much of the total allocation has been allocated in each portfolio. Those weights are used as bounds for the total optimization''' # Old comment vs my interpretation (kept both in case err - for now)
+def get_bnds_for_total(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates the bounds for total optimization based on the asset mix and portfolio allocations.
+
+    Parameters:
+    Asset_mix (pd.DataFrame): A DataFrame containing the asset mix weights for different portfolios.
+    solution_df (pd.DataFrame): A DataFrame containing the solved portfolio allocations.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the upper and lower bounds for optimization for each rating.
+    """
     sol = solution_dollar_amounts(Asset_mix, solution_df)
-    total = sol.loc[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
+    total = sol[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
     dollars = Asset_mix['Total']
+    
+    # Calculate bounds by dividing total allocation by asset mix
     bounds = total.div(dollars, axis=0)
     bounds = bounds.where(bounds > 0, 0)
+    
     return bounds
 
-def liabilities_table(Asset_mix, solution_df):
+
+def liabilities_table(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Creates a table of liability allocations for each bond rating based on the asset mix and portfolio allocations.
+
+    Parameters:
+    Asset_mix (pd.DataFrame): A DataFrame containing the asset mix weights for different portfolios.
+    solution_df (pd.DataFrame): A DataFrame containing the solved portfolio allocations.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the liability allocations by bond rating.
+    """
     sol = solution_dollar_amounts(Asset_mix, solution_df)
-    total = sol.loc[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
+    total = sol[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
     dollars = total.sum(axis=1)
+    
+    # Calculate liability allocations by dividing by total dollars
     liabilities = total.div(dollars, axis=0)
     liabilities['rating'] = liabilities.index
     liabilities['portfolio'] = 'Liability'
-    liabilities = liabilities.reset_index(drop=True)
-    return liabilities
+    
+    return liabilities.reset_index(drop=True)
 
-def surplus_table(Asset_mix, solution_df):
+
+def surplus_table(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Creates a table of surplus allocations for each bond rating based on the asset mix and portfolio allocations.
+
+    Parameters:
+    Asset_mix (pd.DataFrame): A DataFrame containing the asset mix weights for different portfolios.
+    solution_df (pd.DataFrame): A DataFrame containing the solved portfolio allocations.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the surplus allocations by bond rating.
+    """
     npt_weights = Asset_mix['Total']
-    npt_sol = solution_df[(solution_df['portfolio'] == 'Total')].drop(columns=['portfolio']).set_index('rating')
+    npt_sol = solution_df[solution_df['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
 
+    # Calculate optimized solution using weights
     optimization_sol = npt_sol.mul(npt_weights, axis=0)
 
-
     sol = solution_dollar_amounts(Asset_mix, solution_df)
-    total = sol.loc[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
+    total = sol[sol['portfolio'] == 'Total'].drop(columns=['portfolio']).set_index('rating')
 
+    # Calculate the surplus by subtracting total from optimization
     total = optimization_sol - total
     dollars = total.sum(axis=1)
+    
+    # Calculate surplus allocations by dividing by total dollars
     surplus = total.div(dollars, axis=0)
     surplus['rating'] = surplus.index
     surplus['portfolio'] = 'Surplus'
-    surplus = surplus.reset_index(drop=True)
-    return surplus
+    
+    return surplus.reset_index(drop=True)
 
-def calc_bounds(given_date, portfolio, total):
-    if ((portfolio != 'ul') & (portfolio != 'np')):
-        return [[0, 1],  [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]]
+
+from typing import List
+from datetime import datetime
+
+def calc_bounds(given_date: datetime, portfolio: str, total: float) -> List[List[float]]:
+    """
+    Calculates the optimization bounds for cashflow buckets based on historical data for a given portfolio.
+
+    Parameters:
+    given_date (datetime): The date to base the historical data on.
+    portfolio (str): The portfolio type (such as 'ul' or 'np') for which bounds are being calculated.
+    total (float): The total portfolio value to normalize bounds.
+
+    Returns:
+    List[List[float]]: A list of bounds for each cashflow bucket, defining the lower and upper limits.
+    """
+    if portfolio not in ['ul', 'np']:
+        return [[0, 1]] * 6  # Default bounds for other portfolios
 
     year = given_date.strftime('%Y')
     year_folder = given_date.strftime('%Y')
-
     quarter = ((given_date.month - 1) // 3) + 1
     prev_quarter = quarter - 1
     if prev_quarter == 0:
         prev_quarter = 4
         year = str(given_date.year - 1)
+
     quarter = str(quarter)
     prev_quarter = str(prev_quarter)
 
-    if (given_date.year == 2024) & (quarter == '1'):
-        file_name = portfolio + ' IFE Estimate Q1 2024.xlsx'
+    # Construct the file name based on the quarter and year
+    if given_date.year == 2024 and quarter == '1':
+        file_name = f"{portfolio} IFE Estimate Q1 2024.xlsx"
     else:
         file_name = f"{portfolio} IFE Estimate Q{quarter} {year}.xlsx"
-        # file_name = portfolio + ' IFE Estimate Q' + prev_quarter + ' ' + year + ' to Q' + quarter + '.xlsx'
 
-
-
-    path_input = os.path.join(sysenv.get('LOB_MANAGEMENT_DIR'), "Investment Income Explanation", year_folder, 'IFE estimates', ('Q'+quarter), file_name)
+    path_input = os.path.join(sysenv.get('LOB_MANAGEMENT_DIR'), "Investment Income Explanation", year_folder, 
+                              'IFE estimates', f'Q{quarter}', file_name)
     try:
         workbook = openpyxl.load_workbook(path_input, data_only=True, read_only=True)
     except FileNotFoundError:
-        file_name = portfolio + ' IFE Estimate Q' + prev_quarter + ' ' + year + ' to Q' + quarter + '.xlsx'
-        path_input = os.path.join(sysenv.get('LOB_MANAGEMENT_DIR'), "Investment Income Explanation", year_folder,
-                                  'IFE estimates', ('Q' + quarter), file_name)
+        file_name = f"{portfolio} IFE Estimate Q{prev_quarter} {year} to Q{quarter}.xlsx"
+        path_input = os.path.join(sysenv.get('LOB_MANAGEMENT_DIR'), "Investment Income Explanation", 
+                                  year_folder, 'IFE estimates', f'Q{quarter}', file_name)
         workbook = openpyxl.load_workbook(path_input, data_only=True, read_only=True)
 
     ws = workbook['CF']
@@ -707,35 +931,54 @@ def calc_bounds(given_date, portfolio, total):
     columns = next(data)[0:]
     df = pd.DataFrame(data, columns=columns)
 
+    # Retrieve the present value (PV) for each cashflow bucket
     cf_pvs = df.iloc[1:7, 34].tolist()
-    bnds = []
+    bounds = []
 
-    # if the cf pv is negative, allow short positions in those buckets, otherwise (0, 6)
-    for x in cf_pvs:
-        if x >= 0:
-            bnds.append([0, 6])
+    # Define bounds for each bucket, allowing short positions if PV is negative
+    for pv in cf_pvs:
+        if pv >= 0:
+            bounds.append([0, 6])
         else:
-            bnds.append([x/total, 6])
-    return bnds
+            bounds.append([pv / total, 6])
+
+    return bounds
 
 ''' given a df with a multi-index, portfolio and rating, this function will sum all rows with the same rating, and append the sum to a new row with portfolio 'Total' '''
-def get_totals_for_rating(df, reset_index=False):
+def get_totals_for_rating(df: pd.DataFrame, reset_index: bool = False) -> pd.DataFrame:
+    """
+    Summarizes the total values for each rating in the given DataFrame by aggregating portfolios.
+
+    Parameters:
+    df (pd.DataFrame): A DataFrame with multi-index of 'portfolio' and 'rating'.
+    reset_index (bool): Whether to reset the index after aggregating. Default is False.
+
+    Returns:
+    pd.DataFrame: A DataFrame with total values for each rating, with an additional row for portfolio 'Total'.
+    """
     print(df)
+
     df_copy = df.copy()
     df_grouped = df_copy.groupby('rating')
+
+    # Sum all rows with the same rating and append the total row
     for index, row in df_grouped:
         total_values = row.sum()
         total_values['rating'] = index
         total_values['portfolio'] = 'Total'
-        total_values = pd.DataFrame(total_values).T.set_index(['portfolio', 'rating'])
-        df_copy = pd.concat([df_copy, total_values])
+        total_values_df = pd.DataFrame(total_values).T.set_index(['portfolio', 'rating'])
+        df_copy = pd.concat([df_copy, total_values_df])
 
-    if reset_index:
-        return df_copy.reset_index()
+    return df_copy.reset_index() if reset_index else df_copy
 
-    return df_copy
 
-def public_sensitivities():
+def public_sensitivities() -> pd.DataFrame:
+    """
+    Retrieves public asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for public asset classes.
+    """
     file_name = "Targets By Asset Class.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
     sheet = 'public'
@@ -747,7 +990,14 @@ def public_sensitivities():
 
     return df
 
-def private_sensitivities():
+
+def private_sensitivities() -> pd.DataFrame:
+    """
+    Retrieves private asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for private asset classes.
+    """
     file_name = "Targets By Asset Class.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
     sheet = 'private'
@@ -759,7 +1009,14 @@ def private_sensitivities():
 
     return df
 
-def mortgage_sensitivities():
+
+def mortgage_sensitivities() -> pd.DataFrame:
+    """
+    Retrieves mortgage asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for mortgage asset classes.
+    """
     file_name = "Targets By Asset Class.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
     sheet = 'mortgage'
