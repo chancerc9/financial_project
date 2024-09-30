@@ -1,0 +1,9 @@
+{
+    "editor.fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
+    "editor.fontSize": 14,
+    "editor.lineHeight": 22,
+    "editor.letterSpacing": 0.5,
+    "editor.formatOnSave": true,
+    "terminal.integrated.fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
+    "terminal.integrated.fontSize": 14,
+}
