@@ -41,6 +41,7 @@ General_cur = General_conn.con.cursor()
 
 
 # for the (?), double-check through terminology
+import model_portfolio as mp
 
 ### CODE ###
 
@@ -161,7 +162,10 @@ def get_ftse_data(givenDate: datetime) -> pd.DataFrame:
     """
     return df
   
-    # code takes it, puts it into 70 buckets, figure out the coupons and the weights, and puts it back down to 6 buckts (*a) , to find assets to invest, and to match up to our sensitivities
+    """
+    code takes it, puts it into 70 buckets, figure out the coupons and the weights, and puts it back down to 
+    6 buckts (*a) , to find assets to invest, and to match up to our sensitivities
+    """
 def create_bucketing_table() -> pd.DataFrame:
     """
     Creates a bucketing table with term intervals.
@@ -203,7 +207,7 @@ def create_weight_tables(ftse_data: pd.DataFrame):
         columns=list(range(1, 7)))
 
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"  # (*Brenda: more concise and clear - simple)
+        column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"  # Revised to be more concise and clear - Brenda
         
         # Create bucketing table
         df = create_bucketing_table()
@@ -261,11 +265,12 @@ def create_general_shock_table() -> pd.DataFrame:
     
     return df
 
-
-# Interpolating for half-years - side-eff 1
+  #"""
+  #Interpolating for half-years - side-eff 1
+  #"""
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
-def create_shock_tables(curves): # CURVES are BOND CURVES LOL
+def create_shock_tables(curves): # CURVES are BOND CURVES
     """
     Function to create up and down shock tables for bond curves
     """
@@ -277,10 +282,11 @@ def create_shock_tables(curves): # CURVES are BOND CURVES LOL
     down_shocks[0] = -down_shocks[0]
 
     #### Interpolates BOND CURVES for half years
-    ## (*begin) Interpolates half-year curves (avg of 1, 2y rate for 11/12yr curve
-        # 1+1/2 is average of 1y and 2y rate
 
-    # Interpolating bond curves for half-year intervals
+    ## (*begin) Interpolates half-year curves (avg of 1, 2y rate for 1.5 yr curve
+        # 1+1/2 is average of 1y and 2y rate)
+
+    # Interpolating bond curves for half-year intervals (linear interpolation; take average of up-down years)
     curves_mod = pd.DataFrame(
         columns=['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate'],
         index=list(np.linspace(start=0.5, stop=35, num=70)))
@@ -292,9 +298,16 @@ def create_shock_tables(curves): # CURVES are BOND CURVES LOL
             curves_mod.loc[yr, rating] = (curves.loc[yr + .5, rating] + curves.loc[yr - .5, rating]) / 2
 
     curves_mod.loc[0.5] = curves_mod.loc[1]
-    curves_mod.fillna(method='ffill', inplace=True) ## (*end)
+    curves_mod.fillna(method='ffill', inplace=True)
 
-    ####
+    CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
+                                       'benchmarking_outputs', 'Brenda', '20240628', 'Debugging_Steps')
+    # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
+    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
+    mp.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, '20240628', 'interpolated_bond_curves')
+
+
+    #### (*end)
 
     # Apply up and down shocks to bond curves
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
@@ -322,10 +335,12 @@ def create_shock_tables(curves): # CURVES are BOND CURVES LOL
 
 # (*begin) Takes each year and looks at rating and FTSE universe (half-year would be from .25 to .75; up quarter year and down quarter year for half year, and so on for every year
 
+##### version 1-OLD begins #####
+
 # Function to calculate the average coupon rate for a specific bond rating and year
 # It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
 # The average coupon is weighted by the market weight of the bond, excluding REITs.
-def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
+def calc_avg_coupon_v1(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     """
     Calculates the average coupon rate for a specific bond rating and year, weighted by the market weight of the bond.
 
@@ -362,13 +377,79 @@ def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     # Otherwise, calculate the weighted average coupon rate, dividing by 2 for semi-annual coupon payments. As follows:
         # 1. Multiply the market weight by the coupon rate and divide by the market value-adjusted interest (mvai).
         # 2. Divide the sum of these weighted values by the sum of market weights/mvai.
-    avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df['mvai']).sum() /
+    avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df['mvai']).sum() / # Change in code to use the price (SAME as EXCEL) ****
                   (df['marketweight_noREITs'] / df['mvai']).sum()) / 2  # Divide by 2 to account for semi-annual coupons
-    
+
     # Return the calculated average coupon rate for the given rating and year (average was 0 if no matching bonds were found from FTSE bond databank)
+
     return avg_coupon
 
+##### version 1-OLD ends #####
 
+""" Notional Weighting """
+
+# Function to calculate the average coupon rate for a specific bond rating and year
+# It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
+# The average coupon is weighted by the notional weight of the bond, excluding REITs.
+# Average coupon is normalized by balancing one SUMPRODUCT against another. (Can delete)
+def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
+    """
+    Calculates the average coupon rate for a specific bond rating and year, weighted by the market weight of the bond.
+
+    Parameters:
+    year (float): The specific year (maturity) to calculate the coupon for.
+    rating (str): The bond rating category (e.g., 'Federal', 'CorporateAAA_AA', etc.).
+    ftse_data (pd.DataFrame): A DataFrame containing FTSE bond data.
+
+    Returns:
+    float: The average coupon rate for the specified bond rating and year.
+    """
+    # Determine the column to filter by: "RatingBucket" for most bonds, or "Sector" for 'Corporate'
+    column_to_look_in = "RatingBucket"
+    if rating == 'Corporate':
+        column_to_look_in = "Sector"  # Corporate bonds are filtered by 'Sector'
+
+    # Define the term bounds (quarter-year before and after the specified year)
+    lower_bound = year - 0.25
+    upper_bound = year + 0.25
+
+    """ can also use a filter (boolean mask) here: """
+
+    # In code: LB <= filtered_coupons < UB
+    #
+    # Filter FTSE data for bonds that:
+    # 1. Match the rating or sector
+    # 2. Have a term (maturity year) within the bounds
+    # 3. Have a positive market weight excluding REITs
+    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) &
+                       (ftse_data['TermPt'] < upper_bound) &  # coupon < UB, coupon >= LB
+                       (ftse_data['TermPt'] > (lower_bound - 0.001)) & # >= lower bound ; why not just use >=?
+                       (ftse_data['marketweight_noREITs'] > 0)]
+
+    # If no bonds match the criteria, return a coupon rate of 0
+    if df.empty:
+        return 0
+
+    # (filtered df above)
+
+    weighted_sum = (df['mvai'] * df['marketweight_noREITs'] * (1/df['price'])).sum() # is there an equivalent np.sum() operation?
+
+    weighted_sum_with_coupon = (df['mvai'] * df['marketweight_noREITs'] * (1/df['price']) * df['annualcouponrate']).sum()
+
+    average_coupon = (weighted_sum_with_coupon / weighted_sum) / 2  # accounts for semi-annual coupons
+
+    """
+    # Otherwise, calculate the weighted average coupon rate, dividing by 2 for semi-annual coupon payments. As follows:
+    # 1. Multiply the market weight by the coupon rate and divide by the market value-adjusted interest (mvai).
+    # 2. Divide the sum of these weighted values by the sum of market weights/mvai.
+    avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df[
+        'mvai']).sum() /  # Change in code to use the price (SAME as EXCEL) ****
+                  (df['marketweight_noREITs'] / df['mvai']).sum()) / 2  # Divide by 2 to account for semi-annual coupons
+    """
+
+    # Return the calculated average coupon rate for the given rating and year (average was 0 if no matching bonds were found from FTSE bond databank)
+
+    return average_coupon
 
 # Function to calculate the present value (PV) of bonds for a specific rating and year
 # It uses the FTSE data to filter bonds based on the rating and term and then calculates the PV.

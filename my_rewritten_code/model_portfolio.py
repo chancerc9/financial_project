@@ -40,6 +40,7 @@ import os
 import sys
 import traceback
 from collections import OrderedDict
+from typing import Dict
 
 # Third-party imports
 import numpy as np
@@ -80,6 +81,56 @@ MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'bren
 os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
 LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'), 'a')  # Append to the existing logfile, or create a new one
 
+
+## Start of Model Portfolio code: ##
+
+def write_results_to_excel_single_sheet(solutions: Dict[str, pd.DataFrame], file_path: str):
+    """ Writes the optimization results to an Excel file.
+
+    Parameters:
+    solutions (Dict[str, pd.DataFrame]): A dictionary of solution DataFrames.
+    file_path (str): The file path to write the Excel file.
+    """
+    # Ensure the directory exists
+    directory = os.path.dirname(file_path)
+    if not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+
+    # Check if the file already exists (optional, depending on behavior you want)
+    if not os.path.exists(file_path):
+        # Writing to the Excel file
+        with pd.ExcelWriter(file_path) as writer:
+            for name, solution in solutions.items():
+                # Each DataFrame will be written to a separate sheet in the Excel file
+                solution.to_excel(writer, sheet_name=f'{name}_solution')
+
+def write_results_to_excel(solutions: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
+    """
+    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
+
+    Parameters:
+    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
+    base_dir (str): The base directory where the Excel file will be stored.
+    cur_date (str): Current date as a string for including in the file name.
+    excel_filename (str): The name of the overall Excel file to save. The file stem name.
+    """
+    # Construct the full directory path
+    output_dir = os.path.join(base_dir, 'FTSE_Cashflows', cur_date)
+    # Ensure the directory exists (create it if necessary)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Construct the full file path for the overall Excel file
+    file_path = os.path.join(output_dir, f'{excel_filename}_{cur_date}.xlsx')
+
+    # Write all solutions to separate sheets within the same Excel file
+    with pd.ExcelWriter(file_path) as writer:
+        for rating, df in solutions.items():
+            sheet_name = f'{rating}_solution'
+            df.to_excel(writer, sheet_name=sheet_name)
+
+    print(f"Successfully written all solutions to {file_path}")
+
+
 def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     """
     Creates the Key Rate Duration (KRD) table for assets on a given date.
@@ -88,18 +139,32 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     Parameters:
     GivenDate (pd.Timestamp): The date for which to calculate the KRD table.
 
+    What it does:
+    Creates and aggregates the KRD profiles (i.e., sensitivities) and weighted-averages it into 6 buckets.
+
+    Elaboration:
+    Calculates the KRD profiles (i.e., sensitivities) and calls make_krd_table(sensitivities) to perform a weighted-averages
+    for the sensitivities into 6 buckets. Final df of KRD profiles for 6 buckets is used for optimizer and produced for KRD
+    profiles solutions results.
+
+
     Returns:
-    pd.DataFrame: A DataFrame containing weighted sensitivities for each bond rating.
+    pd.DataFrame: A DataFrame containing weighted sensitivities for each bond rating. For 6 buckets; used for optimizer.
     """
     # Retrieves bond curve data and FTSE bond info from our database
-    bond_curves = helpers.get_bond_curves(GivenDate)  # Retrieve bond curve data
-    ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info
+    bond_curves = helpers.get_bond_curves(GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years)
+    ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info (all required data)
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables
+                                                              # Makes a weight table for the 6 buckets (to 6 buckets, from the 70 buckets cfs)
     weights, totals = helpers.create_weight_tables(ftse_data) # Makes a weight table for each bond rating and bucket
-    cf_tables = helpers.create_cf_tables(ftse_data) # Makes a 30 year average cashflow table for each bond rating and bucket, with principal 100
+
+    cf_tables = helpers.create_cf_tables(ftse_data) # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
     shock_tables = helpers.create_shock_tables(bond_curves) # Makes 30 year up and down shock tables for each bond rating and bucket
     sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables) # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
+
+    # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
+
 
     # Create directories for storing the results
     cur_date = GivenDate.strftime('%Y%m%d')
@@ -111,9 +176,11 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
         file_path = os.path.join(path, f'{rating}_sensitivities_{cur_date}.xlsx')
         if not os.path.exists(file_path):
             with pd.ExcelWriter(file_path) as writer:
-                sensitivities[rating].to_excel(writer)
+                sensitivities[rating].to_excel(writer) # 70 buckets?
 
-    # Calculate and return the overall KRD table
+
+
+    # Calculate and return the overall KRD table (6 buckets)
     df = helpers.make_krd_table(weights, sensitivities)
     df['rating'] = df['rating'].replace({
         'CorporateBBB': 'corporateBBB',
@@ -121,224 +188,43 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
         'CorporateAAA_AA': 'corporateAAA_AA'
     })
 
+    """
+    Method for debugging:
+    """
+
+    CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
+    # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
+    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
+    write_results_to_excel(bond_curves, CURR_DEBUGGING_PATH, cur_date, 'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
+
+    # write_results_to_excel(bond_curves, CURR_FILE_PATH)
+
+    # Creates weight tables for each bond rating based on subindex percentages (for bonds):
+    # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'bond_weights.xlsx')
+    #os.makedirs(CURR_FILE_PATH, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
+    #write_results_to_excel(weights, CURR_FILE_PATH)
+    write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date, 'bond_weights_per_rating_for_6_buckets') # weighting to make 70 buckets into 6 buckets
+    write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date, 'total_universe_weights') # unneeded; can use for debugging
+
+    # shocked curves table:
+    write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
+
+    # KRD table:
+    # FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'KRD_table.xlsx')
+    # os.makedirs(CURR_FILE_PATH, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
+    #write_results_to_excel(weights, CURR_FILE_PATH)
+    write_results_to_excel(df, CURR_DEBUGGING_PATH, cur_date, 'final_krd_table')  # check how they format it for the writer
+
+    # cf tables based on ftse data
+    write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
+
+
+    """
+    End of method for debugging
+    """
     return df
 
-
-def reading_liabilities(cur_date, over_under=None):
-    if over_under:
-        string_date = over_under.strftime('%Y%m%d')
-
-    else:
-        string_date = cur_date.strftime('%Y%m%d')
-    file_name = "Over_Under_Asseting_" + string_date + ".xlsm"
-    # file_name = "Over_Under_Asseting_20240103.xlsm"
-    if over_under:
-        path_input = os.path.join(sysenv.get('OVER_UNDER_ASSETING_DIR'), over_under.strftime('%Y'), "past_files",
-                                  file_name)
-    else:
-        path_input = os.path.join(sysenv.get('OVER_UNDER_ASSETING_DIR'), cur_date.strftime('%Y'), "past_files", file_name)
-    # path_input = os.path.join(sysenv.get('OVER_UNDER_ASSETING_DIR'), "2024", "past_files", file_name)
-    workbook = openpyxl.load_workbook(path_input, read_only=True, data_only=True)
-    sheet = workbook.sheetnames[12]
-    sheet = 'CR01 QE'
-    ws = workbook[sheet]
-
-
-    df = pd.DataFrame(ws.values, columns=next(ws.values)[0:])
-
-    df2 = df.iloc[53:128, :15]
-
-
-
-    # This section calculates a reduction to be applied to the federal bonds, with the info taken from the over_under_asseting file
-    federal_reduction = df.iloc[35:45, 1:6]
-    federal_reduction.columns = federal_reduction.iloc[0]
-    federal_reduction = federal_reduction.drop(federal_reduction.index[0])
-    federal_reduction.loc['NFI weights'] = 1 - federal_reduction.iloc[-1]
-    federal_reduction = federal_reduction.iloc[[0, -1]]
-    federal_reduction.loc['Canada / (Canada + NFI)'] = federal_reduction.iloc[0] / (federal_reduction.iloc[0] + federal_reduction.iloc[1])
-    federal_reduction = federal_reduction.rename(columns={'Payout FPC': 'Payout',
-                                                          'Group': 'group',
-                                                          'UL': 'ul',
-                                                          'NP': 'np'})
-
-
-
-
-    df2 = df2.rename(columns={'Liability': 'Payout',
-                              'Assets': 'Payout Assets',
-                              'Assets / Liabilities': 'ul',
-                              'Unnamed: 3': 'Universal Assets',
-                              'Unnamed: 4': 'Accum',
-                              'Unnamed: 5': 'Accum Assets',
-                              'Unnamed: 6': 'group',
-                              'Liability.1': 'Group Assets',
-                              'Assets.1': 'np',
-                              'Assets / Liabilities.1': 'Nonpar Assets',
-                              'Unnamed: 10': 'Surplus Assets',
-                              'BEAR FLATTENING': 'Parcsm Assets',
-                              'Unnamed: 12': 'Total Liability',
-                              'Unnamed: 13': 'Total Assets'})
-    df2.columns = ['index', 'Payout', 'Payout Assets', 'ul', 'Universal Assets', 'Accum', 'Accum Assets', 'group', 'Group Assets', 'np', 'Nonpar Assets', 'Surplus Assets', 'Parcsm Assets', 'Total Liability', 'Total Assets']
-    df2.set_index(df2.columns[0], inplace=True)
-    df2 = df2[['Payout', 'ul', 'Accum', 'group', 'np']]
-
-    df2 = df2.reset_index()
-    federal_ratio = df2.iloc[63, 1:]
-
-    df2 = df2[df2['index'].str.contains('DV01', na=False)]
-
-    df2 = df2.reset_index(drop=True)
-
-    ratings = ['PROVINCIAL' if i < 10 else 'CorpAAA_AA' if i < 20 else 'CorpA' if i < 30 else 'CorpBBB' if i < 40 else 'FEDERAL' for i in range(50)]
-    df2.insert(0, 'Rating', ratings)
-
-    rating_dict = {}
-    for rating in ['PROVINCIAL', 'CorpAAA_AA', 'CorpA', 'CorpBBB', 'FEDERAL']:
-        df = df2.loc[df2['Rating'] == rating].iloc[:, 1:].set_index('index')
-        df.index = df.index.str[5:]
-        df.index.name = None
-        df.loc['70Y'] = 0
-
-        if rating == 'CorpBBB':
-            df = df / 1.4
-        rating_dict[rating] = df#.to_dict()
-    rating_dict['Total'] = rating_dict['FEDERAL'].div(federal_ratio, axis=1)
-    new_fed = rating_dict['Total'] - rating_dict['PROVINCIAL'] - rating_dict['CorpAAA_AA'] - rating_dict['CorpA'] - rating_dict['CorpBBB']
-    rating_dict['FEDERAL'] = new_fed.mul(federal_reduction.iloc[2], axis=1) # The federal reduction is applied here
-
-
-
-    year = cur_date.year
-    quarter = ((cur_date.month - 1) // 3) + 1
-    if quarter == 1:
-        prev_quarter = 4
-        year -= 1
-    else:
-        prev_quarter = quarter - 1
-    year_quarter = str(year) + 'Q' + str(prev_quarter)
-
-    # in this seciton of the code the private sensitivities are obtained from the appropriate Risk measure file
-    # year_quarter = '2023Q4'
-
-    private_sensitivity_dict = {}
-    mortgage_sensitivity_dict = {}
-    for portfolio in ['Payout', 'group', 'Accum', 'ul', 'np', 'Surplus', 'ParCSM']:
-
-        file_name = "Risk measure " + year_quarter + " - " + portfolio + ".xlsm"
-        ''' to account for the new naming convention in the risk measures folders'''
-        if year <= 2023:
-            path_input = os.path.join(sysenv.get('RISK_MANAGEMENT_DIR'), "Risk Measures", year_quarter, file_name)
-        else:
-            path_input = os.path.join(sysenv.get('RISK_MANAGEMENT_DIR'), "Risk Measures", str(year), ('Q' + str(prev_quarter)), file_name)
-        workbook = openpyxl.load_workbook(path_input, data_only=True)
-        sheet = 'KRD sensitivities'  # workbook.sheetnames[0]
-        ws = workbook[sheet]
-        data = ws.values
-        columns = next(data)[0:]
-        df = pd.DataFrame(data, columns=columns).iloc[:, 1:15]
-
-
-        df.columns = df.iloc[0]
-        df = df.drop(df.index[0])
-
-        df['Year'] = df['Base'].shift(1)
-        df['Type'] = df['Base']
-        df = df.drop(df.index[0]).iloc[11:, 8:]
-
-    # mortgage Insured -> Federal, MortgagesConv -> CorpBBB
-        df = df[df['Type'] == 'Current assets'].reset_index().drop('index', axis=1)
-        df[['Year', 'direction']] = df['Year'].str.split('_', n=1, expand=True)
-        df = df.drop(['Type'], axis=1).set_index('Year').drop('direction', axis=1)
-        df['PROVINCIAL'] = 0.0
-        df_up = df.iloc[:11, :]
-        df_down = df.iloc[11:, :]
-
-        private_sensitivities = (df_up - df_down) / (2 * 0.0001)
-        mortgage_sensitivities = private_sensitivities.loc[:, "MortgagesInsured": 'MortgagesConv']
-        mortgage_sensitivities = mortgage_sensitivities.rename(columns={'MortgagesInsured': 'FEDERAL', 'MortgagesConv': 'CorpBBB'})
-        private_sensitivities['PrivateBBB'] = private_sensitivities['PrivateBBB'] # + private_sensitivities['MortgagesConv']
-        private_sensitivities = private_sensitivities.drop(['MortgagesConv', 'MortgagesInsured'], axis=1)
-        private_sensitivities = private_sensitivities.rename(
-            columns={'PrivateBBB': 'CorpBBB', 'PrivateA': 'CorpA', 'PrivateAA': 'CorpAAA_AA', 'PrivateBB_B': 'CorpBB_B'})
-                    # 'MortgagesInsured': 'FEDERAL'})
-
-        private_sensitivity_dict[portfolio] = private_sensitivities / 10000.0
-        mortgage_sensitivity_dict[portfolio] = mortgage_sensitivities / 10000.0
-
-
-
-    # Here the sensitivities are uploaded to our database to avoid repeating the previous section since extracting from excel takes a long time
-    Create_comand = """
-                   CREATE TABLE IF NOT EXISTS target_sensitivity
-                    (portfolio character varying(100), asset_type character varying(100), date date, rating character varying(100), "1Y" double precision,
-                    "2Y" double precision, "3Y" double precision, "5Y" double precision, "7Y" double precision, "10Y" double precision,
-                    "15Y" double precision, "20Y" double precision, "25Y" double precision, "30Y" double precision,
-                    "70Y" double precision,
-                    CONSTRAINT target_sensitivity_pk  PRIMARY KEY(portfolio, asset_type, date, rating) )
-                    """
-    execute_table_query(Create_comand, 'Benchmark')
-    # BM_cur.execute(Create_comand)
-    # BM_conn.con.commit()
-
-    total_sensitivity_dict = {}
-    for portfolio in ['Payout', 'group', 'Accum', 'ul', 'np', 'Surplus', 'ParCSM']:
-        rating_sensitivity_dict = {}
-        for rating in ['FEDERAL', 'CorpBBB', 'CorpA', 'PROVINCIAL', 'CorpAAA_AA', 'CorpBB_B', 'Total']:
-            if (portfolio != 'Surplus') & (portfolio != 'ParCSM') & (rating != 'CorpBB_B'):
-                rating_sensitivity = rating_dict[rating][portfolio]
-            if (rating != 'FEDERAL') & (rating != 'Total'):
-                private_sensitivity = private_sensitivity_dict[portfolio][rating]#.to_dict()
-            if (rating == 'CorpBBB') or (rating == 'FEDERAL'):
-                mortgage_sensitivity = mortgage_sensitivity_dict[portfolio][rating]
-
-
-
-            Delete_Comand = """
-                            DELETE FROM target_sensitivity WHERE date = '{}' AND portfolio = '{}' AND rating = '{}' """.format(
-                cur_date, portfolio, rating)
-            execute_table_query(Delete_Comand, 'Benchmark')
-            # BM_cur.execute(Delete_Comand)
-            # BM_conn.con.commit()
-
-            if (portfolio != 'Surplus') & (portfolio != 'ParCSM') & (rating != 'CorpBB_B'):
-                # insert public sensitivity
-                INSERT_query = """
-                                  INSERT INTO target_sensitivity (portfolio, asset_type, date,  rating, "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y", "70Y") VALUES ( %s,%s, %s, %s, %s, %s, %s,%s, %s, %s,%s, %s, %s,%s, %s)
-                                  """
-                # BM_cur.execute(INSERT_query, (portfolio, 'public', cur_date, rating) + tuple(rating_sensitivity.values))
-                # BM_conn.con.commit()
-                execute_table_query(INSERT_query, 'Benchmark', parameters=(portfolio, 'public', cur_date, rating) + tuple(rating_sensitivity.values))
-
-            if (rating != 'FEDERAL') & (rating != 'Total') & (rating != 'PROVINCIAL'):
-                # insert private sensitivity
-                INSERT_query = """
-                                              INSERT INTO target_sensitivity (portfolio, asset_type, date, rating, "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y", "70Y") VALUES ( %s,%s, %s, %s, %s, %s, %s,%s, %s, %s,%s, %s, %s,%s, %s)
-                                              """
-                # BM_cur.execute(INSERT_query, (portfolio, 'private', cur_date, rating) + tuple(private_sensitivity.values))
-                # BM_conn.con.commit()
-                execute_table_query(INSERT_query, 'Benchmark', parameters=(portfolio, 'private', cur_date, rating) + tuple(private_sensitivity.values))
-
-            if (rating == 'CorpBBB') or (rating == 'FEDERAL'):
-                #insert mortgage sensitivity
-                INSERT_query = """
-                                                              INSERT INTO target_sensitivity (portfolio, asset_type, date, rating, "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y", "70Y") VALUES ( %s,%s, %s, %s, %s, %s, %s,%s, %s, %s,%s, %s, %s,%s, %s)
-                                                              """
-                # BM_cur.execute(INSERT_query,
-                #                (portfolio, 'mortgage', cur_date, rating) + tuple(mortgage_sensitivity.values))
-                # BM_conn.con.commit()
-                execute_table_query(INSERT_query, 'Benchmark', parameters=(portfolio, 'mortgage', cur_date, rating) + tuple(mortgage_sensitivity.values))
-
-
-            print("uploaded data for '{}' + '{}'".format(portfolio, rating))
-
-            if (portfolio != 'Surplus') & (portfolio != 'ParCSM'):
-                rating_sensitivity_dict[rating] = rating_sensitivity
-
-        total_sensitivity_dict[portfolio] = rating_sensitivity_dict
-
 # Reads in asset segments for liabilities:
-
 def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False, sheet_version: int = 1):  # -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Reads and calculates the asset mix for liabilities based on the given date.
@@ -384,9 +270,9 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False, sheet_
     return df_public, df_private, df_mortgages
 
 
-def optimization_worker(given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
+def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
 
-    KRDs = reading_asset_KRDs(given_date)
+    KRDs = AssetKRDsTable
 
     if curMonthBS:
         df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS, sheet_version) # top
@@ -438,7 +324,6 @@ def optimization_worker(given_date, over_under, asset_type='public', swap=False,
     else:
         ''' For the public optimization, we subtract the private and mortgage target sensitivities from the public target and optimize for the net sensitivity '''
         net_sensitivity = helpers.public_sensitivities()
-
 
 
 
@@ -519,7 +404,7 @@ def optimization_worker(given_date, over_under, asset_type='public', swap=False,
                         continue
 
 
-            ''' First grab the KRDs of the assets of the corresponding rating '''
+            ''' First grab the KRDs of the assets of the corresponding rating ''' # This could have been done earlier for better logic. (Brenda Jump Here to Revise and MOVE UP for consecutive logic)
             krd = KRDs[KRDs['rating'] == rating]
             krd = krd.reset_index().drop(krd.columns[[0, 1]], axis=1).drop('index', axis=1).to_numpy()
 
@@ -644,7 +529,7 @@ def optimization_worker(given_date, over_under, asset_type='public', swap=False,
 
 
 
-# is the issue here?
+            # is the issue here?
             if portfolio == 'Total':
                 ''' Uses a different x0 because [0, 0, 0, 0, 0, 1] is sometimes out of bounds and it gives an incorrect solution '''
                 sumofbnds = 1 - bnds[0][0] - bnds[1][0] - bnds[2][0] - bnds[3][0] - bnds[4][0] - bnds[5][0]
@@ -684,12 +569,12 @@ def optimization_worker(given_date, over_under, asset_type='public', swap=False,
 
     return solution_df
 
-
-def optimization(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
+# Wrapper function for optimization; provide given KRDs or have optim function call KRD function
+def optimization(KRDs: pd.DataFrame, given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
     sheet_version = 1 # segments
-    sol_df_seg = optimization_worker(given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
+    sol_df_seg = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
     sheet_version = 0 # totals
-    sol_df_tot = optimization_worker(given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
+    sol_df_tot = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
 
     def overwrite_total_rows(sol_df_seg, sol_df_tot):
         """
@@ -769,28 +654,47 @@ def main():  # model_portfolio.py new version
         # Determine if all outputs need to be optimized
         do_all = not (args.mortgage or args.public or args.private)
 
+        """ Changelog Brenda (09-30-24):
+            I've now modified it to generate KRDs and hold them to pass down in memory rather than generate new KRDs during 
+            each sector's back-to-back optimization.
+            
+            Considering, optimization and writing KRD solutions to excel file happen back-to-back hence most of stack memory
+            holds it concurrently anyways.
+            
+            They are the same KRD profiles tables to write to excel in the very end, and used for every type of liability optimization. 
+            Since, we have
+                asset KRD profiles + list(liability segments)
+            for optimization.
+        """
+
+        # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
+        KRDs = reading_asset_KRDs(GivenDate)
+
+
         # Optimize for mortgages, publics, and privates based on user input
         if args.mortgage or do_all:
             misc.log('Optimizing mortgages', LOGFILE)
-            mort_solution = optimization(GivenDate, OU_Date, asset_type='mortgage')
+            mort_solution = optimization(KRDs, GivenDate, OU_Date, asset_type='mortgage')
 
         if args.public or do_all:
             misc.log('Optimizing publics', LOGFILE)
-            public_solution = optimization(GivenDate, OU_Date, asset_type='public')
+            public_solution = optimization(KRDs, GivenDate, OU_Date, asset_type='public')
 
         if args.private or do_all:
             misc.log('Optimizing privates', LOGFILE)
-            private_solution = optimization(GivenDate, OU_Date, asset_type='private')
+            private_solution = optimization(KRDs, GivenDate, OU_Date, asset_type='private')
 
         cur_date = GivenDate.strftime('%Y%m%d')
-        # path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', cur_date) - old (normal)
 
+        """Original filepath:
+        path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', cur_date) - old (normal)
+        """
         folder_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
                                    'benchmarking_outputs',
-                                   'Brenda', cur_date)  # added folder 'Brenda' - Brenda
+                                   'Brenda', cur_date)  # Test path - Brenda
         os.makedirs(folder_path, exist_ok=True) # (*) delete and replace with Normal (below)
 
-        test_ftse_cashflows_path = folder_path + '/FTSE_Cashflows_' + cur_date + '.xlsx'  # Brenda (temp solution)
+        test_ftse_cashflows_path = folder_path + '/FTSE_Cashflows_' + cur_date + '.xlsx'  # Cashflows - Brenda
 
         # for benchmarking only:
         # custom_benchmarks_path = folder_path + '/Custom_benchmark_' + cur_date + '.xlsx'
@@ -801,7 +705,6 @@ def main():  # model_portfolio.py new version
         #     os.mkdir(path)
 
         # Creates folder for FTSE Cashflows
-        # lol ill fix this code
 
         ftse_data = helpers.get_ftse_data(GivenDate)  # gets ftse bond info from our database
 
