@@ -126,7 +126,7 @@ def write_results_to_excel(solutions: Dict[str, pd.DataFrame], base_dir: str, cu
     with pd.ExcelWriter(file_path) as writer:
         for rating, df in solutions.items():
             sheet_name = f'{rating}_solution'
-            df.to_excel(writer, sheet_name=sheet_name)
+            df.to_excel(writer, sheet_name=sheet_name) # take the rating
 
     print(f"Successfully written all solutions to {file_path}")
 
@@ -159,7 +159,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
                                                               # Makes a weight table for the 6 buckets (to 6 buckets, from the 70 buckets cfs)
     weights, totals = helpers.create_weight_tables(ftse_data) # Makes a weight table for each bond rating and bucket
 
-    cf_tables = helpers.create_cf_tables(ftse_data) # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
+    cf_tables = helpers.create_cf_tables(ftse_data) #, GivenDate) # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
     shock_tables = helpers.create_shock_tables(bond_curves) # Makes 30 year up and down shock tables for each bond rating and bucket
     sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables) # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
 
@@ -181,7 +181,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
 
 
     # Calculate and return the overall KRD table (6 buckets)
-    df = helpers.make_krd_table(weights, sensitivities)
+    df = helpers.make_krd_table(weights, sensitivities) # sensitivities are in 70 ttm buckets * 10 KRD shock intervals (terms) (TODO: !)
     df['rating'] = df['rating'].replace({
         'CorporateBBB': 'corporateBBB',
         'CorporateA': 'corporateA',
@@ -262,18 +262,23 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False, sheet_
     df_private = df.iloc[5:11].drop(columns=['SEGFUNDS'])
 
     df_private.rename({'PrivateAA': 'corporateAAA_AA', 'PrivateA': 'corporateA', 'PrivateBBB': 'corporateBBB', 'MortgagesInsured': 'Federal'}, inplace=True)
-    df_public.rename({'CorpAAA_AA': 'corporateAAA_AA', 'CorpA': 'corporateA', 'CorpBBB': 'corporateBBB'}, inplace=True)
+    df_public.rename({'CorpAAA_AA': 'corporateAAA_AA', 'CorpA': 'corporateA', 'CorpBBB': 'corporateBBB'}, inplace=True) # Rename it better here
 
     df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'corporateBBB'}, inplace=False)  # orig: inplace=True; use inplace=FALSE for debugging purposes.
     df_private.drop(['PrivateBB_B', 'MortgagesConv', 'Federal'], inplace=True)
+
+    # TODO: added back from old code:
+    # df_private.loc['Provincial'] = 0
 
     return df_public, df_private, df_mortgages
 
 
 def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date, over_under, asset_type='public', swap=False, curMonthBS=False, sheet_version=1):  # default sheet_version is segments (1)
 
-    KRDs = AssetKRDsTable
+    KRDs = AssetKRDsTable  # maybe need to have this function do it so the benchmarks (create benchmarking tables) can run
 
+    # or do an if-else; if given, then this; else, this (if it is none-type)
+    # if you have objects, then they can recognize this; they can recognize when you are feeding it in than unknown.
     if curMonthBS:
         df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS, sheet_version) # top
     else:
@@ -602,6 +607,41 @@ def optimization(KRDs: pd.DataFrame, given_date, over_under, asset_type='public'
     return sol_df
 
 
+def optimization_USE_RUN_CODE(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
+
+    KRDs = reading_asset_KRDs(given_date)  # can only use objects to solve this code complexity peprhaps (this is diff so far with orig, where orig used for mP and this benchmarking atm needs - consider objects or structures (consider file layout) to feed tetc)
+
+    sheet_version = 1 # segments
+    sol_df_seg = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
+    sheet_version = 0 # totals
+    sol_df_tot = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
+
+    def overwrite_total_rows(sol_df_seg, sol_df_tot):
+        """
+        Overwrite 'Total' portfolio rows in sol_df_seg with rows from sol_df_tot.
+
+        Args:
+        sol_df_seg: DataFrame containing segment results (public, private, mortgage).
+        sol_df_tot: DataFrame containing total portfolio results.
+
+        Returns:
+        sol_df_seg: Updated DataFrame with 'Total' portfolio rows replaced by sol_df_tot rows.
+        """
+
+        # Step 1: Filter out the 'Total' rows from both sol_df_seg and sol_df_tot
+        total_rows_tot = sol_df_tot[sol_df_tot['portfolio'] == 'Total']
+        non_total_rows_seg = sol_df_seg[sol_df_seg['portfolio'] != 'Total']
+
+        # Step 2: Concatenate non-'Total' rows from sol_df_seg with 'Total' rows from sol_df_tot
+        updated_sol_df_seg = pd.concat([total_rows_tot, non_total_rows_seg], ignore_index=True)
+
+        return updated_sol_df_seg
+
+    sol_df = overwrite_total_rows(sol_df_seg, sol_df_tot)
+
+    return sol_df
+
+
 def get_user_info():  # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
     """
     Retrieves command-line arguments and converts them to usable date objects.
@@ -708,7 +748,7 @@ def main():  # model_portfolio.py new version
 
         ftse_data = helpers.get_ftse_data(GivenDate)  # gets ftse bond info from our database
 
-        cf_dict = helpers.create_cf_tables(ftse_data)
+        cf_dict = helpers.create_cf_tables(ftse_data) #, GivenDate) # TODO: New!
 
         # Writes to cashflows:
         FCF_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
