@@ -295,16 +295,18 @@ def create_semi_annual_bond_curves(curves) -> pd.DataFrame: # curves from ftse c
 
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
-def create_shock_tables(curves): # CURVES are BOND CURVES
+def create_shock_tables(curves): # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
     """
     Function to create up and down shock tables for bond curves
     """
     # makes a dictionary containing tables for up shocks and down shocks for each rating
     shocks_dict = {}
-    up_shocks = create_general_shock_table()
+    up_shocks = create_general_shock_table() # creates a df with col named '0', '1', etc
+    # """old code
     down_shocks = create_general_shock_table() # TODO: lol
-    down_shocks = -down_shocks
-    down_shocks[0] = -down_shocks[0]
+    down_shocks = -down_shocks # can decouple into classes
+    down_shocks[0] = -down_shocks[0] # this column (called '0' lmao) holds the bucket numbers, such a weird df... it has both indices and col with dupe nums, guess this fn expects that
+    # end of old code """
 
     #### Interpolates BOND CURVES for half years
 
@@ -735,7 +737,7 @@ def create_sensitivity_tables(cashflows: Dict[str, pd.DataFrame], shocks: Dict[s
                 average_sensitivity.iloc[x, i + 1] = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator != 0)  # Gets the dollar-weighted amounts
                 """
                 # TODO: NEW CODE
-                pv = np.sum(cashflows[rating].iloc[i, 3:] * ups.iloc[:, 0]) # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values
+                pv = np.sum(cashflows[rating].iloc[i, 3:] * ups.iloc[:, 0]) # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values; of discounted curves
                 average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / pv
                 # End
         # Store the calculated sensitivity table for the rating

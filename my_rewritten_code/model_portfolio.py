@@ -152,7 +152,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     pd.DataFrame: A DataFrame containing weighted sensitivities for each bond rating. For 6 buckets; used for optimizer.
     """
     # Retrieves bond curve data and FTSE bond info from our database
-    bond_curves = helpers.get_bond_curves(GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years)
+    bond_curves = helpers.get_bond_curves(GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years) - CLASSIFY so can use in multiple code and points of entry, including run_code; needs this all lol
     ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info (all required data)
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables
@@ -679,10 +679,9 @@ def get_user_info():  # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]
 
     return args, GivenDate, OU_Date
 
-
 def main():  # model_portfolio.py new version
     """
-    Main function to orchestrate the portfolio optimization process. 
+    Main function to orchestrate the portfolio optimization process.
     It gathers user input, runs the appropriate optimizations, and saves the results.
     """
     try:
@@ -697,10 +696,10 @@ def main():  # model_portfolio.py new version
         """ Changelog Brenda (09-30-24):
             I've now modified it to generate KRDs and hold them to pass down in memory rather than generate new KRDs during 
             each sector's back-to-back optimization.
-            
+
             Considering, optimization and writing KRD solutions to excel file happen back-to-back hence most of stack memory
             holds it concurrently anyways.
-            
+
             They are the same KRD profiles tables to write to excel in the very end, and used for every type of liability optimization. 
             Since, we have
                 asset KRD profiles + list(liability segments)
@@ -748,12 +747,12 @@ def main():  # model_portfolio.py new version
 
         ftse_data = helpers.get_ftse_data(GivenDate)  # gets ftse bond info from our database
 
-        cf_dict = helpers.create_cf_tables(ftse_data) #, GivenDate) # TODO: New!
+        cf_dict = helpers.create_cf_tables(ftse_data) # , GivenDate) # TODO: New!
 
         # Writes to cashflows:
         FCF_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                   'benchmarking_outputs',
-                                   'Brenda')
+                                'benchmarking_outputs',
+                                'Brenda')
         FTSE_CASHFLOWS_DIR = os.path.join(FCF_PATH, 'FTSE_Cashflows', cur_date)
         os.makedirs(FTSE_CASHFLOWS_DIR, exist_ok=True)  # Create directories 'brenda' and 'logs' if they don't exist
 
@@ -787,8 +786,12 @@ def main():  # model_portfolio.py new version
     except:
         misc.log("Failed " + misc.errtxt(), LOGFILE)
 
+
+
+
 if __name__ == "__main__":
     main()
+
 
 
 
