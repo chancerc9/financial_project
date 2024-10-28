@@ -84,27 +84,8 @@ LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'), 'a')  # Append 
 
 ## Start of Model Portfolio code: ##
 
-def write_results_to_excel_single_sheet(solutions: Dict[str, pd.DataFrame], file_path: str):
-    """ Writes the optimization results to an Excel file.
-
-    Parameters:
-    solutions (Dict[str, pd.DataFrame]): A dictionary of solution DataFrames.
-    file_path (str): The file path to write the Excel file.
-    """
-    # Ensure the directory exists
-    directory = os.path.dirname(file_path)
-    if not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
-
-    # Check if the file already exists (optional, depending on behavior you want)
-    if not os.path.exists(file_path):
-        # Writing to the Excel file
-        with pd.ExcelWriter(file_path) as writer:
-            for name, solution in solutions.items():
-                # Each DataFrame will be written to a separate sheet in the Excel file
-                solution.to_excel(writer, sheet_name=f'{name}_solution')
-
-def write_results_to_excel(solutions: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
+# all items in one sheet, need to write this
+def write_results_to_excel_one_sheet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
     """
     Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
 
@@ -115,18 +96,77 @@ def write_results_to_excel(solutions: Dict[str, pd.DataFrame], base_dir: str, cu
     excel_filename (str): The name of the overall Excel file to save. The file stem name.
     """
     # Construct the full directory path
-    output_dir = os.path.join(base_dir, 'FTSE_Cashflows', cur_date)
+    folder_path = os.path.join(base_dir, excel_filename, cur_date)
+    # Ensure the directory exists (create it if necessary)
+    os.makedirs(folder_path, exist_ok=True)
+
+
+    file_path = os.path.join(folder_path, f'{excel_filename}_{cur_date}.xlsx')
+
+
+    if not os.path.exists(file_path):
+        with pd.ExcelWriter(file_path) as writer:
+            item_to_excel.to_excel(writer, sheet_name=excel_filename)
+    else:
+        print(f'{excel_filename} for this quarter already exists - cant make a file with the same name')
+
+    print("Successfully written to debugging steps")
+
+# One sheet per book; multiple books per rating.
+def write_results_to_excel_by_rating_doesnt_work_yet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
+    """
+    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
+
+    Parameters:
+    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
+    base_dir (str): The base directory where the Excel file will be stored.
+    cur_date (str): Current date as a string for including in the file name.
+    excel_filename (str): The name of the overall Excel file to save. The file stem name.
+    """
+    # Construct the full directory path
+    output_dir = os.path.join(base_dir, excel_filename, cur_date)
+    # Ensure the directory exists (create it if necessary)
+    os.makedirs(output_dir, exist_ok=True)
+
+
+    for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
+        # Construct the full file path for the overall Excel file
+        file_path = os.path.join(output_dir, f'{rating}_{excel_filename}_{cur_date}.xlsx')
+        if not os.path.exists(file_path):
+            with pd.ExcelWriter(file_path) as writer:
+                item_to_excel[rating].to_excel(writer)
+        else:
+            print('debugging steps files for this date already exists - delete for new version - cant make a file with the same name')
+
+    print("Successfully written to debugging steps")
+
+# One item per sheet; multiple sheets per book
+def write_results_to_excel(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
+    """
+    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
+
+    Parameters:
+    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
+    base_dir (str): The base directory where the Excel file will be stored.
+    cur_date (str): Current date as a string for including in the file name.
+    excel_filename (str): The name of the overall Excel file to save. The file stem name.
+    """
+    # Construct the full directory path
+    output_dir = os.path.join(base_dir, cur_date)
     # Ensure the directory exists (create it if necessary)
     os.makedirs(output_dir, exist_ok=True)
 
     # Construct the full file path for the overall Excel file
     file_path = os.path.join(output_dir, f'{excel_filename}_{cur_date}.xlsx')
 
+    if not os.path.exists(file_path):
     # Write all solutions to separate sheets within the same Excel file
-    with pd.ExcelWriter(file_path) as writer:
-        for rating, df in solutions.items():
-            sheet_name = f'{rating}_solution'
-            df.to_excel(writer, sheet_name=sheet_name) # take the rating
+        with pd.ExcelWriter(file_path) as writer:
+            for rating, df in item_to_excel.items():
+                sheet_name = f'{rating}_solution'
+                df.to_excel(writer, sheet_name=sheet_name) # take the rating
+    else:
+        print('debugging steps files for this date already exists - delete for new version - cant make a file with the same name')
 
     print(f"Successfully written all solutions to {file_path}")
 
@@ -160,7 +200,8 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     weights, totals = helpers.create_weight_tables(ftse_data) # Makes a weight table for each bond rating and bucket
 
     cf_tables = helpers.create_cf_tables(ftse_data) #, GivenDate) # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
-    shock_tables = helpers.create_shock_tables(bond_curves) # Makes 30 year up and down shock tables for each bond rating and bucket
+    # TODO! temp GivenDate, can make it OOP class
+    shock_tables = helpers.create_shock_tables(bond_curves, GivenDate) # Makes 30 year up and down shock tables for each bond rating and bucket
     sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables) # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
 
     # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
@@ -213,7 +254,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     # FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'KRD_table.xlsx')
     # os.makedirs(CURR_FILE_PATH, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
     #write_results_to_excel(weights, CURR_FILE_PATH)
-    write_results_to_excel(df, CURR_DEBUGGING_PATH, cur_date, 'final_krd_table')  # check how they format it for the writer
+    write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date, 'final_krd_table')  # check how they format it for the writer
 
     # cf tables based on ftse data
     write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
@@ -310,8 +351,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date, over_under, as
     #     'CorpAAA_AA': 'corporateAAA_AA', 'CorpBB_B': 'corporateBB_B'})
     #df = df.drop('70Y', axis=1)
 
-
-
+    # Reads in targets sensitivities to match sols:
     ''' Separating the db values into 3 tables, one for each asset class '''
     private_sensitivity = helpers.private_sensitivities().set_index(['portfolio', 'rating'])
     mortgage_sensitivity = helpers.mortgage_sensitivities().set_index(['portfolio', 'rating'])
@@ -576,40 +616,8 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date, over_under, as
 
 # Wrapper function for optimization; provide given KRDs or have optim function call KRD function
 def optimization(KRDs: pd.DataFrame, given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
-    sheet_version = 1 # segments
-    sol_df_seg = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
-    sheet_version = 0 # totals
-    sol_df_tot = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
 
-    def overwrite_total_rows(sol_df_seg, sol_df_tot):
-        """
-        Overwrite 'Total' portfolio rows in sol_df_seg with rows from sol_df_tot.
-
-        Args:
-        sol_df_seg: DataFrame containing segment results (public, private, mortgage).
-        sol_df_tot: DataFrame containing total portfolio results.
-
-        Returns:
-        sol_df_seg: Updated DataFrame with 'Total' portfolio rows replaced by sol_df_tot rows.
-        """
-
-        # Step 1: Filter out the 'Total' rows from both sol_df_seg and sol_df_tot
-        total_rows_tot = sol_df_tot[sol_df_tot['portfolio'] == 'Total']
-        non_total_rows_seg = sol_df_seg[sol_df_seg['portfolio'] != 'Total']
-
-        # Step 2: Concatenate non-'Total' rows from sol_df_seg with 'Total' rows from sol_df_tot
-        updated_sol_df_seg = pd.concat([total_rows_tot, non_total_rows_seg], ignore_index=True)
-
-        return updated_sol_df_seg
-
-    sol_df = overwrite_total_rows(sol_df_seg, sol_df_tot)
-
-    return sol_df
-
-
-def optimization_USE_RUN_CODE(given_date, over_under, asset_type='public', swap=False, curMonthBS=False):
-
-    KRDs = reading_asset_KRDs(given_date)  # can only use objects to solve this code complexity peprhaps (this is diff so far with orig, where orig used for mP and this benchmarking atm needs - consider objects or structures (consider file layout) to feed tetc)
+    # KRDs = reading_asset_KRDs(given_date)  # can only use objects to solve this code complexity peprhaps (this is diff so far with orig, where orig used for mP and this benchmarking atm needs - consider objects or structures (consider file layout) to feed tetc)
 
     sheet_version = 1 # segments
     sol_df_seg = optimization_worker(KRDs, given_date, over_under, asset_type, swap, curMonthBS, sheet_version)
@@ -640,6 +648,7 @@ def optimization_USE_RUN_CODE(given_date, over_under, asset_type='public', swap=
     sol_df = overwrite_total_rows(sol_df_seg, sol_df_tot)
 
     return sol_df
+
 
 
 def get_user_info():  # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
@@ -709,11 +718,14 @@ def main():  # model_portfolio.py new version
         # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
         KRDs = reading_asset_KRDs(GivenDate)
 
+        ftse_data = helpers.get_ftse_data(GivenDate)  # gets ftse bond info from our database
+
+
 
         # Optimize for mortgages, publics, and privates based on user input
         if args.mortgage or do_all:
             misc.log('Optimizing mortgages', LOGFILE)
-            mort_solution = optimization(KRDs, GivenDate, OU_Date, asset_type='mortgage')
+            mort_solution = optimization(KRDs, GivenDate, OU_Date, asset_type='mortgage') # make ftse data a parent class that is inherited by any data manipulating function classes below - any without using it can be a method(s)
 
         if args.public or do_all:
             misc.log('Optimizing publics', LOGFILE)
@@ -733,6 +745,9 @@ def main():  # model_portfolio.py new version
                                    'Brenda', cur_date)  # Test path - Brenda
         os.makedirs(folder_path, exist_ok=True) # (*) delete and replace with Normal (below)
 
+
+        write_results_to_excel_one_sheet(ftse_data,folder_path,cur_date,'ftse_data') # for ftse data
+
         test_ftse_cashflows_path = folder_path + '/FTSE_Cashflows_' + cur_date + '.xlsx'  # Cashflows - Brenda
 
         # for benchmarking only:
@@ -745,7 +760,6 @@ def main():  # model_portfolio.py new version
 
         # Creates folder for FTSE Cashflows
 
-        ftse_data = helpers.get_ftse_data(GivenDate)  # gets ftse bond info from our database
 
         cf_dict = helpers.create_cf_tables(ftse_data) # , GivenDate) # TODO: New!
 

@@ -264,8 +264,34 @@ def create_general_shock_table() -> pd.DataFrame:
             else (((row[0] - buckets[i - 1]) / (buckets[i] - buckets[i - 1]) * shock_size) 
                   if buckets[i - 1] <= row[0] <= buckets[i] else 0), axis=1)
 
+    # TODO: temp code to overwrite shock tables
+    # Assuming df and buckets are already defined
+
+    for i in range(0, 1):
+        df[buckets[1]].iloc[i] = shock_size
+
+    for i in range(60, 70): # df[buckets[10]].iloc[69]  is last one ; i = 70 is out of bounds
+        df[buckets[10]].iloc[i] = shock_size
+
+    # Loop over the specified values of i
+    #for i in [1, 30]:
+        # Access the column df[buckets[i]]
+    #    column_name = buckets[i]
+
+        # Modify the specified ranges of rows
+    #    for j in range(60, 69):
+    #        df.loc[j, column_name] = shock_size  # Using .loc to access by label/index
+
+     #   for j in range(0, 1):
+     #       df.loc[j, column_name] = shock_size  # Using .loc to access by label/index
+
+    # TODO! end
     # Drop the last bucket (100) as it is not needed
     df = df.drop(100, axis=1)
+
+    # TODO! Debugging_steps - general shock table - date is not even needed, since aply same for all dates
+    # can write this one to EXCEL
+
     
     return df
 
@@ -295,7 +321,7 @@ def create_semi_annual_bond_curves(curves) -> pd.DataFrame: # curves from ftse c
 
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
-def create_shock_tables(curves): # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
+def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
     """
     Function to create up and down shock tables for bond curves
     """
@@ -303,6 +329,28 @@ def create_shock_tables(curves): # CURVES are BOND CURVES (not yet interpolated,
     shocks_dict = {}
     up_shocks = create_general_shock_table() # creates a df with col named '0', '1', etc
     # """old code
+
+    # TODO! Write to excel, needs to objectify it
+
+    cur_date = GivenDate.strftime('%Y%m%d')
+
+    folder_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
+                               'Brenda', 'shocks_table')
+
+    excel_filename = 'shocks_table'
+    file_path = os.path.join(folder_path, f'{excel_filename}_{cur_date}.xlsx')
+
+    if not os.path.exists(folder_path):
+        os.mkdir(folder_path)
+
+    if not os.path.exists(file_path):
+        with pd.ExcelWriter(file_path) as writer:
+            up_shocks.to_excel(writer, sheet_name='general_shocks')
+    else:
+        print('shocks file for this quarter already exists - cant make a file with the same name')
+
+    # can use general writer for this - adopt this into general writer (this works already as one sheet so use this code)
+
     down_shocks = create_general_shock_table() # TODO: lol
     down_shocks = -down_shocks # can decouple into classes
     down_shocks[0] = -down_shocks[0] # this column (called '0' lmao) holds the bucket numbers, such a weird df... it has both indices and col with dupe nums, guess this fn expects that
@@ -327,11 +375,13 @@ def create_shock_tables(curves): # CURVES are BOND CURVES (not yet interpolated,
     curves_mod.loc[0.5] = curves_mod.loc[1]
     curves_mod.fillna(method='ffill', inplace=True)
 
+    cur_date = GivenDate.strftime('%Y%m%d') # givendate to str - consider doing it here or as fn
+
     CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                       'benchmarking_outputs', 'Brenda', '20240628', 'Debugging_Steps')
+                                       'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
     # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
     os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
-    mp.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, '20240628', 'interpolated_bond_curves')
+    mp.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
 
 
     #### (*end)
@@ -987,7 +1037,7 @@ def make_CFs_buckets_table(weights: Dict[str, pd.DataFrame],
 import os
 from datetime import datetime
 
-def getBSPath(date: datetime) -> str:
+def getBSPath_unneeded(date: datetime) -> str:
     """
     Generates the file path for the Segmented Balance Sheet (SBS) file based on the provided date.
 
