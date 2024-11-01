@@ -127,7 +127,7 @@ def get_ftse_data(givenDate: datetime) -> pd.DataFrame:
     total_marketweight = df['marketweight'].sum()
     real_estate_weight = df[df['industrygroup'] == "Real Estate"]['marketweight'].sum()
     df['marketweight_noREITs'] = df.apply(lambda row: 0 if row['industrygroup'] == "Real Estate" 
-                                          else row['marketweight'] / (total_marketweight - real_estate_weight) * 100, axis=1)
+                                          else row['marketweight'] / (total_marketweight - real_estate_weight) * 100, axis=1) # TODO! This manipulates it for market_weight_noRET too
 
     # Add classification columns for sector (e.g. a bond name) and rating
     df['Sector'] = df.apply(lambda row: row['industrygroup'] if row['industrysector'] == 'Government' else row['industrysector'], axis=1)
@@ -135,10 +135,10 @@ def get_ftse_data(givenDate: datetime) -> pd.DataFrame:
     df['SectorM'] = df['Sector']
     df['Rating_c'] = df.apply(lambda row: "AAA_AA" if row['rating'] in ['AA', 'AAA'] else row['rating'], axis=1)
     df['RatingBucket'] = df.apply(lambda row: row['SectorM'] + row['Rating_c'] if row['SectorM'] == 'Corporate' else row['SectorM'], axis=1)
-    df['mvai'] = df['accruedinterest'] + df['price']
+    df['mvai'] = df['accruedinterest'] + df['price']  # TODO! This is what MVAI is; accrued interest + price (should have a calculations sheet) - does FTSE normally have an mvai, which we don't query and use substitute ours for instead here?
 
     # Calculate term points based on maturity date
-    df['TermPt'] = df.apply(lambda row: round((row['maturitydate'] - givenDate.date()).days / 365.25, 2), axis=1)
+    df['TermPt'] = df.apply(lambda row: round((row['maturitydate'] - givenDate.date()).days / 365.25, 2), axis=1) # TODO! This is hardcoded, worthwhile putting the calculations on another page - for how we process the ftse data
 
     # Bucket the bonds into six term buckets (conditions => maintainability - *Brenda*)
     conditions = [
@@ -147,9 +147,9 @@ def get_ftse_data(givenDate: datetime) -> pd.DataFrame:
     (df['TermPt'] < 15.75),
     (df['TermPt'] < 20.75),
     (df['TermPt'] < 27.75),
-    (df['TermPt'] < 35.25)
+    (df['TermPt'] < 35.25)  # datahandler
     ]
-    choices = [1, 2, 3, 4, 5, 6]
+    choices = [1, 2, 3, 4, 5, 6] # only methods are for bond terms and curves, not even for ftse data as it manipulates it (!!)
     df['bucket'] = np.select(conditions, choices, default=0)  # np.select() for vectorization (*Brenda* - these comments are removable)
 
     """
@@ -183,7 +183,7 @@ def create_bucketing_table() -> pd.DataFrame:
     
     # Adjust the first and last bounds
     df.iloc[0, 1] = 0
-    df.iloc[-1, 2] = 100
+    df.iloc[-1, 2] = 100 # TODO! should the last bound be 100?
 
     return df
 
@@ -213,7 +213,7 @@ def create_weight_tables(ftse_data: pd.DataFrame):
         column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"  # Revised to be more concise and clear - Brenda
         
         # Create bucketing table
-        df = create_bucketing_table()
+        df = create_bucketing_table()  # This is for the 70 buckets; weights is for the 6 buckets (from 70 buckets)
         
          # Sum market weights within each bucket
         for x in range(6):
@@ -224,7 +224,7 @@ def create_weight_tables(ftse_data: pd.DataFrame):
             # Calculate total market weight for the given rating and term bucket
             df[column_name] = df.apply(lambda row: ftse_data.loc[
                 (ftse_data[column_to_look_in] == rating) &
-                (ftse_data['TermPt'] < upper_b) &
+                (ftse_data['TermPt'] < upper_b) & # if between lower and upper bounds && between the Lower and Upper bouds by create bucketing table - curious if somehow the cashflows were not affected, because the changes were small and only builds in KRDs?
                 (ftse_data['TermPt'] >= lower_b) &
                 (ftse_data['TermPt'] < row['Upper_Bound']) &
                 (ftse_data['TermPt'] > row['Lower_Bound'] - 0.0001)
@@ -419,12 +419,15 @@ def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (
 # The average coupon is weighted by the notional weight of the bond, excluding REITs.
 # The 'price' is MVAI (market weighted price after interest), and we divide it out so removed the market weighting to retain the
 # Notional weighting
+
+# TODO! This actually buckets it for the cashflows
+#  this function is directly related to the create_cashflows_70 function and does the bucketing for it
 def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     """
     Calculates the average coupon rate for a specific bond rating and year, weighted by the notional weight of the bond.
 
     Parameters:
-    year (float): The specific year (maturity) to calculate the coupon for.
+    year (float): The specific year (maturity) to calculate the coupon for. Called 'Bucket", a bucket of 0.5 increments from 0.5 ttm to 35 ttm
     rating (str): The bond rating category (e.g., 'Federal', 'CorporateAAA_AA', etc.).
     ftse_data (pd.DataFrame): A DataFrame containing FTSE bond data.
 
@@ -446,8 +449,8 @@ def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     # 3. Have a positive market weight excluding REITs
     df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) &
                        (ftse_data['TermPt'] < upper_bound) &
-                       (ftse_data['TermPt'] > (lower_bound - 0.001)) &
-                       (ftse_data['marketweight_noREITs'] > 0)]
+                       (ftse_data['TermPt'] > (lower_bound - 0.001)) &  # TODO! essentially, the cashflows 70 uses an appropriate bucketing method in calc_pv and calc_avg_coupon and the weights (6) uses create_bucketing_table to determine the 6th bucket weightings from the FTSE universe, which uses an upper bound of 100 - this mainly affects provincial bond sensitivity weightings, as, the provincial bonds comprise more of the ttms > 35.25. notice that this is bucket 0 in ftse universe, already determined - so this function could simplify it further. Moreover, the 70 cashflows use a different weighting system, and, I presume are less sensitive in 6 weightings than the KRD sensitivities - should have a more formalized (or ocnsistent) system of weighting the exact same way, imo
+                       (ftse_data['marketweight_noREITs'] > 0)]   # TODO! NOTE: this uses a DIFFERENT bucketing system than create_bucketing_tables() which is used for the bounds of calculating the 6 weights from 70 tables. Lol, this is funny
 
     # If no bonds match the criteria, return a coupon rate of 0
     if df.empty:

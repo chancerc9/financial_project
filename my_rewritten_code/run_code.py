@@ -324,8 +324,14 @@ def create_summed_cashflow_tables(solution_df, given_date, asset_type='public', 
             # summed_cfs['rating'] = 0
 
             # TODO: can fix to be better!
+
+            # Generate half-year dates starting from given_date + 6 months
+            # Push first cashflow generation to 6mo afterward
+            start_date = given_date + pd.DateOffset(months=6)
+
             # Generate half-year dates
-            half_year_dates = pd.date_range(given_date, periods=70, freq='6M')
+            # half_year_dates = pd.date_range(given_date, periods=70, freq='6M')
+            half_year_dates = pd.date_range(start=start_date, periods=70, freq='6M') # test 70 temporarily
 
             # Create an indexer to populate summed_cfs['rating']
             for i, date in enumerate(half_year_dates):
@@ -577,11 +583,6 @@ def main_test():
 def main():
 
     args, GivenDate, OU_Date = parse_args.get_user_info()
-    #if args.create:
-    #    if args.OU_Date:
-    #        bench.reading_liabilities(OU_Date)
-    #    else:
-    #        bench.reading_liabilities(GivenDate)
 
     """new code, to use with decoupling (not sure if which prefer...for writing to excel it may depend, or as class can wrap as workflow external"""
     # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
