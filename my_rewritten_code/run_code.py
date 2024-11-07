@@ -54,7 +54,7 @@ import os
 
 import sys
 
-import objects as helpers
+import helpers as helpers
 import model_portfolio as bench
 
 
@@ -490,12 +490,13 @@ def create_indexData_table(solution_df, given_date, asset_type='public', curMont
                                                                                      'ul': 'UNIVERSAL',
                                                                                      'Surplus': 'SURPLUS'})
 
-    ftse_data = helpers.get_ftse_data(given_date)
+    ftse_data = helpers.get_ftse_data(given_date) # separate it out so it runs faster
 
     weights, totals = helpers.create_weight_tables(ftse_data)
 
     ''' Calculates the weight of bonds over 35 years within the ftse universe '''
-    over_35y = (100 - ftse_data.loc[ftse_data['TermPt'] >= 35]['marketweight_noREITs'].sum()) / 100
+    # TODO! changed 35 to 35.25
+    over_35y = (100 - ftse_data.loc[ftse_data['TermPt'] >= 35.25]['marketweight_noREITs'].sum()) / 100
 
 
     df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date,curMonthBS=curMonthBs)
@@ -540,8 +541,16 @@ def create_indexData_table(solution_df, given_date, asset_type='public', curMont
         elif asset_type == 'private':
             benchmark_div_universe.loc['Federal'] = 0
             benchmark_div_universe.loc['Provincial'] = 0
+            """
+            for below:
+            Let 'new col' be ftse_data['Benchmark ' + portfolio + ' weight']
+            
+            If the bucket value is 0 (that is, the TermPt > 35.25 for FTSE data), the new column’s value is set to 0.
+            
+            the new column’s value is set to the corresponding value from the benchmark_div_universe DataFrame, using the RatingBucket and bucket values from the current row as keys for the lookup.
+            """
         ftse_data['Benchmark ' + portfolio + ' weight'] = ftse_data.apply(lambda row: 0 if row['bucket'] == 0 else benchmark_div_universe.loc[row['RatingBucket'], row['bucket']], axis=1)
-        ftse_data['Benchmark ' + portfolio + ' weight'] = ftse_data['marketweight_noREITs'] * ftse_data['Benchmark ' + portfolio + ' weight'] / over_35y
+        ftse_data['Benchmark ' + portfolio + ' weight'] = ftse_data['marketweight_noREITs'] * ftse_data['Benchmark ' + portfolio + ' weight'] # / over_35y
 
     individual_portfolio_sums = asset_mix[['ACCUM', 'GROUP', 'NONPAR', 'PAYOUT', 'UNIVERSAL']].sum(axis=0)
     surplus_portfolio_balance = total_dollar_amount - sum(individual_portfolio_sums)

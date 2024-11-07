@@ -178,12 +178,12 @@ def create_bucketing_table() -> pd.DataFrame:
     df = pd.DataFrame(data=d)
 
     # Calculate the lower and upper bounds for each bucket
-    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(1)) / 2
+    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(1)) / 2  # TODO!  LMAO this is equal to calculating the +25, -25 lower_bound and upper_bound that other functions implement - and may be faster but the others could be considered more intuitive - ask google search or MS Copilot for this terminology or to double check
     df['Upper_Bound'] = df['Lower_Bound'].shift(-1)
     
     # Adjust the first and last bounds
     df.iloc[0, 1] = 0
-    df.iloc[-1, 2] = 100 # TODO! should the last bound be 100?
+    df.iloc[-1, 2] = 100 # TODO! should the last bound be 100? EDIT: YES! Can revert to prior git version
 
     return df
 
@@ -1206,7 +1206,7 @@ def percents(given_date: datetime, curMonthBS: bool = False) -> pd.DataFrame:
 
     file_name = "Mix_hardcoded.xlsx"
     path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
-    workbook = openpyxl.load_workbook(path_input)
+    workbook = openpyxl.load_workbook(path_input, data_only = True) # TODO! new change - linked data vals work
     ws = workbook[year_quarter]  # i.e., ws = workbook['2024Q1']
 
     data = ws.values

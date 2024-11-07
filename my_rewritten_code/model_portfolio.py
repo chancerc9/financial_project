@@ -61,7 +61,7 @@ from equitable.utils import processtools as misc
 sys.path.append(sysenv.get("ALM_DIR"))
 
 # Required custom modules
-import objects as helpers
+import helpers as helpers
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
