@@ -1,3 +1,15 @@
+"""
+Name: .py
+
+Purpose:
+
+Functions:
+
+Side effects:
+
+"""
+
+
 # Standard library imports
 import argparse
 import datetime as datetime
@@ -22,6 +34,9 @@ from equitable.chronos import conversions, offsets
 from equitable.db.db_functions import execute_table_query
 from equitable.db.psyw import SmartDB
 from equitable.infrastructure import jobs, sendemail, sysenv
+
+# Required custom modules
+import file_utils
 
 # Pandas configuration
 pd.set_option('display.width', 150)
@@ -96,76 +111,6 @@ def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     return df  # Returns df: a Dataframe of bond curves for all years, per annum (IIRC)
 
 
-def get_ftse_data(givenDate: datetime) -> pd.DataFrame:
-    """
-    Retrieves bond data from the FTSE universe for a given date and processes it.
-
-    Parameters:
-    givenDate (datetime): The date for which bond data is retrieved.
-
-    Returns:
-    pd.DataFrame: A DataFrame containing processed FTSE bond data with additional calculated columns.
-    """
-    # SQL query to retrieve bond information from the FTSE universe
-    get_bond_info_query = f"""
-                    SELECT date, cusip, term, issuername, 
-                    annualcouponrate, maturitydate, yield, 
-                    accruedinterest, modduration, rating, 
-                    industrysector, industrygroup, industrysubgroup, 
-                    marketweight, price
-                    FROM ftse_universe_constituents
-                    WHERE date= '{givenDate.date()}'
-                    """
-    
-    # Execute the query and create a DataFrame with the result
-    df = pd.DataFrame(execute_table_query(get_bond_info_query, 'Bond', fetch=True))
-    df.columns = ['date', 'cusip', 'term', 'issuername', 'annualcouponrate', 'maturitydate', 'yield', 
-                  'accruedinterest', 'modduration', 'rating', 'industrysector', 'industrygroup', 
-                  'industrysubgroup', 'marketweight', 'price']
-
-    # Calculate the market weight excluding real estate (REITs)
-    total_marketweight = df['marketweight'].sum()
-    real_estate_weight = df[df['industrygroup'] == "Real Estate"]['marketweight'].sum()
-    df['marketweight_noREITs'] = df.apply(lambda row: 0 if row['industrygroup'] == "Real Estate" 
-                                          else row['marketweight'] / (total_marketweight - real_estate_weight) * 100, axis=1) # TODO! This manipulates it for market_weight_noRET too
-
-    # Add classification columns for sector (e.g. a bond name) and rating
-    df['Sector'] = df.apply(lambda row: row['industrygroup'] if row['industrysector'] == 'Government' else row['industrysector'], axis=1)
-    df.drop(df[df['Sector'] == 'Municipal'].index, inplace=True)  # Drop municipal bonds
-    df['SectorM'] = df['Sector']
-    df['Rating_c'] = df.apply(lambda row: "AAA_AA" if row['rating'] in ['AA', 'AAA'] else row['rating'], axis=1)
-    df['RatingBucket'] = df.apply(lambda row: row['SectorM'] + row['Rating_c'] if row['SectorM'] == 'Corporate' else row['SectorM'], axis=1)
-    df['mvai'] = df['accruedinterest'] + df['price']  # TODO! This is what MVAI is; accrued interest + price (should have a calculations sheet) - does FTSE normally have an mvai, which we don't query and use substitute ours for instead here?
-
-    # Calculate term points based on maturity date
-    df['TermPt'] = df.apply(lambda row: round((row['maturitydate'] - givenDate.date()).days / 365.25, 2), axis=1) # TODO! This is hardcoded, worthwhile putting the calculations on another page - for how we process the ftse data
-
-    # Bucket the bonds into six term buckets (conditions => maintainability - *Brenda*)
-    conditions = [
-    (df['TermPt'] < 5.75),
-    (df['TermPt'] < 10.75),
-    (df['TermPt'] < 15.75),
-    (df['TermPt'] < 20.75),
-    (df['TermPt'] < 27.75),
-    (df['TermPt'] < 35.25)  # datahandler
-    ]
-    choices = [1, 2, 3, 4, 5, 6] # only methods are for bond terms and curves, not even for ftse data as it manipulates it (!!)
-    df['bucket'] = np.select(conditions, choices, default=0)  # np.select() for vectorization (*Brenda* - these comments are removable)
-
-    """
-    df['bucket'] = df.apply(lambda row: 1 if row['TermPt'] < 5.75 
-                            else (2 if row['TermPt'] < 10.75 
-                                  else (3 if row['TermPt'] < 15.75 
-                                        else (4 if row['TermPt'] < 20.75 
-                                              else (5 if row['TermPt'] < 27.75 
-                                                    else 6)))), axis=1)
-    """
-    return df
-  
-    """
-    code takes it, puts it into 70 buckets, figure out the coupons and the weights, and puts it back down to 
-    6 buckts (*a) , to find assets to invest, and to match up to our sensitivities
-    """
 def create_bucketing_table() -> pd.DataFrame:
     """
     Creates a bucketing table with term intervals.
@@ -225,7 +170,7 @@ def create_weight_tables(ftse_data: pd.DataFrame):
             df[column_name] = df.apply(lambda row: ftse_data.loc[
                 (ftse_data[column_to_look_in] == rating) &
                 (ftse_data['TermPt'] < upper_b) & # if between lower and upper bounds && between the Lower and Upper bouds by create bucketing table - curious if somehow the cashflows were not affected, because the changes were small and only builds in KRDs?
-                (ftse_data['TermPt'] >= lower_b) &
+                (ftse_data['TermPt'] >= lower_b) & # should make upper_b for ftse data as = else isn't as accurate imo
                 (ftse_data['TermPt'] < row['Upper_Bound']) &
                 (ftse_data['TermPt'] > row['Lower_Bound'] - 0.0001)
             ]['marketweight_noREITs'].sum(), axis=1)
@@ -381,7 +326,7 @@ def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (
                                        'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
     # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
     os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
-    mp.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
+    file_utils.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
 
 
     #### (*end)

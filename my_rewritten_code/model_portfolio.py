@@ -1,36 +1,27 @@
 """
-There are many ways this script can be used.
+Name: model_portfolio_generate.py
 
-It is "safe" to be ran as many times as warranted.
+Purpose:
 
-SPF_BM and SPF_BM_DETAILS can be deleted at any point, provided any new forecasts are manually re-added.
+Functions:
 
-When ran as main, without any arguments:
-   It will do the analysis for today (using 6PM cut-off logic.)
-   
-   This uses DoAnalysis()
-   
-When ran as main, with arguments:
-   It will do the analysis as if it was ran on another date.
-   
-   This uses DoAnalysis()
+Side effects:
 
-When imported, 
-    It can be ran for a specific day, or a range of dates using 
-    
-    Use RunOnHistoricDay() and RunOnRange()
-
-From command line or process control:
-
-    It can be ran on a specific day, or a range of dates, historically will cause an over-write, if it's in the future, it'll be over-written when it become history.
-
-In all cases, if dates provided are historic it will cause an over-write, since only one "asofdate" per security is allowed in the database.
 """
 
 """
     This provided code is a complex script that processes bond-related data, 
     calculates key rate durations (KRDs), and uploads the resulting sensitivities 
     to a database. 
+    
+    
+    Original description (a portion of):
+        There are many ways this script can be used.
+
+        It is "safe" to be ran as many times as warranted.
+
+        When ran as main, without any arguments:
+            It will do the analysis for today (using 6PM cut-off logic.)
 """
 # Standard library imports
 import argparse
@@ -61,7 +52,10 @@ from equitable.utils import processtools as misc
 sys.path.append(sysenv.get("ALM_DIR"))
 
 # Required custom modules
-import helpers as helpers
+import helpers
+import model_portfolio_process as model_portfolio
+import cashflows_and_benchmark_tables
+import cli
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
@@ -76,37 +70,25 @@ Bond_cur = Bond_conn.con.cursor()
 General_conn = SmartDB('General')
 General_cur = General_conn.con.cursor()
 
-# Logging directories:
-MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
-LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'), 'a')  # Append to the existing logfile, or create a new one
-
-
-
-import model_portfolio_process as model_portfolio
-import cashflows_and_benchmark_tables as cashflows_and_benchmark_tables
-
-""" Changelog Brenda (09-30-24):
-    I've now modified it to generate KRDs and hold them to pass down in memory rather than generate new KRDs during 
-    each sector's back-to-back optimization.
-
-    Considering, optimization and writing KRD solutions to excel file happen back-to-back hence most of stack memory
-    holds it concurrently anyways.
-
-    They are the same KRD profiles tables to write to excel in the very end, and used for every type of liability optimization. 
-    Since, we have
-        asset KRD profiles + list(liability segments)
-    for optimization.
-"""
+import encapsulated_objects as datahandler
+import file_utils
 
 def main():  # model_portfolio.py new version
     """
     Main function to orchestrate the portfolio optimization process.
     It gathers user input, runs the appropriate optimizations, and saves the results.
     """
+
+    # Logging directories:
+    MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
+    os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
+    LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
+                   'a')  # Append to the existing logfile, or create a new one
+
+    # Main code:
     try:
         # Retrieve user input
-        args, GivenDate = model_portfolio.get_user_info()
+        args, GivenDate = cli.get_user_info()
 
         misc.log(f'Starting run of: {GivenDate}', LOGFILE)
 
@@ -128,13 +110,31 @@ def main():  # model_portfolio.py new version
 
         # Begin process:
 
-        # Gets info
-        KRDs = model_portfolio.reading_asset_KRDs(GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
-        ftse_data = helpers.get_ftse_data(GivenDate)            # Gets ftse bond info from our database
+        # 1. Define FTSE Universe:
+
+        # i) Initialize FTSEDataHandler for GivenDate:
+        ftse_handler = datahandler.FTSEDataHandler(GivenDate)
+
+        # ii) Retrieve a copy of the FTSE bond data DataFrame
+        ftse_data = ftse_handler.data
+
+        # Display the data to see its structure and contents - can write to excel file here.
+        print(ftse_data.head())  # Prints the first few rows of the DataFrame
+
+
+        # 2. Get cashflows
+
+        # 3. Get KRDs from cashflows - Gets info using copy of ftse data
+        KRDs = model_portfolio.reading_asset_KRDs(ftse_handler.data, GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
+
+
+        # ftse_data = helpers.get_ftse_data(GivenDate)            # Gets ftse bond info from our database
 
         # Output items:
-        model_portfolio.write_results_to_excel_one_sheet(ftse_data,OUTPUT_DIR_PATH,cur_date,'ftse_data') # for ftse data
+        file_utils.write_results_to_excel_one_sheet(ftse_data,OUTPUT_DIR_PATH,cur_date,'ftse_data') # for ftse data
 
+
+        # Optimization function uses .copy()
 
         # Optimize for mortgages, publics, and privates based on user input
         if args.mortgage or do_all:
@@ -158,7 +158,7 @@ def main():  # model_portfolio.py new version
             misc.log('Optimizing privates', LOGFILE)
 
             # Model portfolio:
-            private_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='private')
+            private_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='private') # supposed to optimize the privates last ?
 
             # Benchmarking code: , curMonthBS=args.curMonthBS)
 
@@ -174,7 +174,7 @@ def main():  # model_portfolio.py new version
                     private_solution.to_excel(writer, sheet_name='private_solution')
                 if args.mortgage or do_all:
                     mort_solution.to_excel(writer, sheet_name='mortgage_solution')
-                model_portfolio.reading_asset_KRDs(GivenDate).to_excel(writer, sheet_name='asset KRDs')
+                model_portfolio.reading_asset_KRDs(ftse_handler.data, GivenDate).to_excel(writer, sheet_name='asset KRDs')
                 model_portfolio.reading_asset_mix(GivenDate)[0].to_excel(writer, sheet_name='public asset mix')
                 model_portfolio.reading_asset_mix(GivenDate)[1].to_excel(writer, sheet_name='private asset mix')
                 model_portfolio.reading_asset_mix(GivenDate)[2].to_excel(writer, sheet_name='mort asset mix')
@@ -186,31 +186,35 @@ def main():  # model_portfolio.py new version
         print("Successfully ran: solutions")
 
 
+        ftse_data = ftse_handler.data
 
         # Run and output benchmarks:
         if args.mortgage or do_all:
 
-            summed_cashflows_mort = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, mort_solution, GivenDate, asset_type='mortgage',
-                                                                  curMonthBs=args.curMonthBS)
             summary_mort = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='mortgage', curMonthBs=args.curMonthBS)
-            data_mort = cashflows_and_benchmark_tables.create_indexData_table(mort_solution, GivenDate, ftse_data, asset_type='mortgage')
+            data_mort = cashflows_and_benchmark_tables.create_indexData_table(mort_solution, GivenDate, ftse_handler.data, asset_type='mortgage')
+
+            # Data is protected here:
+            summed_cashflows_mort = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_mort, mort_solution, GivenDate, asset_type='mortgage',
+                                                                  curMonthBs=args.curMonthBS)
+
 
         if args.public or do_all:
 
-            summed_cashflows_public = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, public_solution, GivenDate, asset_type='public',
-                                                                    curMonthBs=args.curMonthBS)
-
             summary_public = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='public', curMonthBs=args.curMonthBS)
-            data_public = cashflows_and_benchmark_tables.create_indexData_table(public_solution, GivenDate, ftse_data, asset_type='public')
+            data_public = cashflows_and_benchmark_tables.create_indexData_table(public_solution, GivenDate, ftse_handler.data, asset_type='public')
 
+            # Data is protected here:
+            summed_cashflows_public = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_public, public_solution, GivenDate, asset_type='public',
+                                                                    curMonthBs=args.curMonthBS)
         if args.private or do_all:
 
-            summed_cashflows_private = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, private_solution, GivenDate, asset_type='private',
-                                                                     curMonthBs=args.curMonthBS)
             summary_private = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='private', curMonthBs=args.curMonthBS)
-            data_private = cashflows_and_benchmark_tables.create_indexData_table(private_solution, GivenDate, ftse_data, asset_type='private')
+            data_private = cashflows_and_benchmark_tables.create_indexData_table(private_solution, GivenDate, ftse_handler.data, asset_type='private')
 
-
+            # Data is protected here:
+            summed_cashflows_private = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_private, private_solution, GivenDate, asset_type='private',
+                                                                     curMonthBs=args.curMonthBS)
 
         custom_benchmarks_path = OUTPUT_DIR_PATH + '/Custom_benchmark_' + cur_date + '.xlsx'
         cfs_path = OUTPUT_DIR_PATH + '/CFs' + cur_date + '.xlsx'
@@ -263,6 +267,19 @@ def main():  # model_portfolio.py new version
 if __name__ == "__main__":
     main()
 
+
+""" Changelog Brenda (09-30-24):
+    I've now modified it to generate KRDs and hold them to pass down in memory rather than generate new KRDs during 
+    each sector's back-to-back optimization.
+
+    Considering, optimization and writing KRD solutions to excel file happen back-to-back hence most of stack memory
+    holds it concurrently anyways.
+
+    They are the same KRD profiles tables to write to excel in the very end, and used for every type of liability optimization. 
+    Since, we have
+        asset KRD profiles + list(liability segments)
+    for optimization.
+"""
 
 
 

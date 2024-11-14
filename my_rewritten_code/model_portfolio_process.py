@@ -26,6 +26,7 @@ From command line or process control:
 
 In all cases, if dates provided are historic it will cause an over-write, since only one "asofdate" per security is allowed in the database.
 """
+# from adodbapi.examples.xls_read import sheet
 
 """
     This provided code is a complex script that processes bond-related data, 
@@ -62,6 +63,7 @@ sys.path.append(sysenv.get("ALM_DIR"))
 
 # Required custom modules
 import helpers as helpers
+import file_utils as file_utils
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
@@ -85,97 +87,11 @@ LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
 
 ## Start of Model Portfolio code: ##
 
-# all items in one sheet, need to write this
-def write_results_to_excel_one_sheet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str,
-                                     excel_filename: str):
-    """
-    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
 
-    Parameters:
-    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
-    base_dir (str): The base directory where the Excel file will be stored.
-    cur_date (str): Current date as a string for including in the file name.
-    excel_filename (str): The name of the overall Excel file to save. The file stem name.
-    """
-    # Construct the full directory path
-    folder_path = os.path.join(base_dir, excel_filename, cur_date)
-    # Ensure the directory exists (create it if necessary)
-    os.makedirs(folder_path, exist_ok=True)
-
-    file_path = os.path.join(folder_path, f'{excel_filename}_{cur_date}.xlsx')
-
-    if not os.path.exists(file_path):
-        with pd.ExcelWriter(file_path) as writer:
-            item_to_excel.to_excel(writer, sheet_name=excel_filename)
-    else:
-        print(f'{excel_filename} for this quarter already exists - cant make a file with the same name')
-
-    print("Successfully written to debugging steps")
-
-
-# One sheet per book; multiple books per rating.
-def write_results_to_excel_by_rating_doesnt_work_yet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str,
-                                                     cur_date: str, excel_filename: str):
-    """
-    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
-
-    Parameters:
-    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
-    base_dir (str): The base directory where the Excel file will be stored.
-    cur_date (str): Current date as a string for including in the file name.
-    excel_filename (str): The name of the overall Excel file to save. The file stem name.
-    """
-    # Construct the full directory path
-    output_dir = os.path.join(base_dir, excel_filename, cur_date)
-    # Ensure the directory exists (create it if necessary)
-    os.makedirs(output_dir, exist_ok=True)
-
-    for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        # Construct the full file path for the overall Excel file
-        file_path = os.path.join(output_dir, f'{rating}_{excel_filename}_{cur_date}.xlsx')
-        if not os.path.exists(file_path):
-            with pd.ExcelWriter(file_path) as writer:
-                item_to_excel[rating].to_excel(writer)
-        else:
-            print(
-                'debugging steps files for this date already exists - delete for new version - cant make a file with the same name')
-
-    print("Successfully written to debugging steps")
-
-
-# One item per sheet; multiple sheets per book
-def write_results_to_excel(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
-    """
-    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
-
-    Parameters:
-    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
-    base_dir (str): The base directory where the Excel file will be stored.
-    cur_date (str): Current date as a string for including in the file name.
-    excel_filename (str): The name of the overall Excel file to save. The file stem name.
-    """
-    # Construct the full directory path
-    output_dir = os.path.join(base_dir, cur_date)
-    # Ensure the directory exists (create it if necessary)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Construct the full file path for the overall Excel file
-    file_path = os.path.join(output_dir, f'{excel_filename}_{cur_date}.xlsx')
-
-    if not os.path.exists(file_path):
-        # Write all solutions to separate sheets within the same Excel file
-        with pd.ExcelWriter(file_path) as writer:
-            for rating, df in item_to_excel.items():
-                sheet_name = f'{rating}_solution'
-                df.to_excel(writer, sheet_name=sheet_name)  # take the rating
-    else:
-        print(
-            'debugging steps files for this date already exists - delete for new version - cant make a file with the same name')
-
-    print(f"Successfully written all solutions to {file_path}")
-
-
-def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
+"""
+Mutates: Nothing
+"""
+def reading_asset_KRDs(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.DataFrame:
     """
     Creates the Key Rate Duration (KRD) table for assets on a given date.
     (Main method to create the KRD table for assets.)
@@ -198,7 +114,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     # Retrieves bond curve data and FTSE bond info from our database
     bond_curves = helpers.get_bond_curves(
         GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years) - CLASSIFY so can use in multiple code and points of entry, including run_code; needs this all lol
-    ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info (all required data)
+    # ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info (all required data)
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables
     # Makes a weight table for the 6 buckets (to 6 buckets, from the 70 buckets cfs)
@@ -244,7 +160,7 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
                                        'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
     # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
     os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
-    write_results_to_excel(bond_curves, CURR_DEBUGGING_PATH, cur_date,
+    file_utils.write_results_to_excel(bond_curves, CURR_DEBUGGING_PATH, cur_date,
                            'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
 
     # write_results_to_excel(bond_curves, CURR_FILE_PATH)
@@ -253,30 +169,33 @@ def reading_asset_KRDs(GivenDate: pd.Timestamp) -> pd.DataFrame:
     # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'bond_weights.xlsx')
     # os.makedirs(CURR_FILE_PATH, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
     # write_results_to_excel(weights, CURR_FILE_PATH)
-    write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date,
+    file_utils.write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date,
                            'bond_weights_per_rating_for_6_buckets')  # weighting to make 70 buckets into 6 buckets
-    write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date,
+    file_utils.write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date,
                            'total_universe_weights')  # unneeded; can use for debugging
 
     # shocked curves table:
-    write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
+    file_utils.write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
 
     # KRD table:
     # FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'KRD_table.xlsx')
     # os.makedirs(CURR_FILE_PATH, exist_ok=True)  # Create directories 'brenda' and 'etc' if they don't exist - Brenda
     # write_results_to_excel(weights, CURR_FILE_PATH)
-    write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date,
+    file_utils.write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date,
                                      'final_krd_table')  # check how they format it for the writer
 
     # cf tables based on ftse data
-    write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
+    file_utils.write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
 
     """
     End of method for debugging
     """
     return df
 
-
+"""
+Mutates: Nothing
+Helper that reading_asset_KRDs(GivenDate) relies on.
+"""
 # Reads in asset segments for liabilities:
 def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
                       sheet_version: int = 1):  # -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -294,10 +213,8 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
         - df_private: Private assets.
         - df_mortgages: Mortgages.
     """
-    if sheet_version == 1:  # 1 for segments, 0 for totals
-        totals = helpers.BSTotals(Given_date, 1)  # totals 1 = segments
-    else:
-        totals = helpers.BSTotals(Given_date, 0)  # totals 0 = total
+    # 1 for segments, 0 for totals
+    totals = helpers.BSTotals(Given_date, sheet_version)
 
     weights = helpers.percents(
         Given_date)  # weights for total is same as weights for everything else, maybe that's where the problem shows - see weights in hardcoded.xlsx (OR)
@@ -308,8 +225,11 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     df.index.name = None
 
     # Adjust Corporate bonds and rename columns for clarity
+    # TODO! use this for rerunning q2
     # df.loc['CorpA'] = df.loc['CorpA'] + df.loc['CorpBBB'] / 2
     # df.loc['CorpBBB'] = df.loc['CorpBBB'] / 2
+
+    ##
 
     df.rename(columns={'ACCUM': 'Accum', 'PAYOUT': 'Payout', 'GROUP': 'group', 'UNIVERSAL': 'ul', 'NONPAR': 'np'},
               inplace=True)
@@ -333,17 +253,17 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     return df_public, df_private, df_mortgages
 
 
+"""
+Functions that *may* mutate things.
+"""
 def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type='public', curMonthBS=False,
                         sheet_version=1):  # default sheet_version is segments (1)
 
-    KRDs = AssetKRDsTable  # maybe need to have this function do it so the benchmarks (create benchmarking tables) can run
+    KRDs = AssetKRDsTable.copy()  # maybe need to have this function do it so the benchmarks (create benchmarking tables) can run
 
     # or do an if-else; if given, then this; else, this (if it is none-type)
     # if you have objects, then they can recognize this; they can recognize when you are feeding it in than unknown.
-    if curMonthBS:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS, sheet_version)  # top
-    else:
-        df_public, df_private, df_mortgages = reading_asset_mix(given_date, False, sheet_version)
+    df_public, df_private, df_mortgages = reading_asset_mix(given_date, curMonthBS, sheet_version)
         # df_public, df_private, df_mortgages = reading_asset_mix(given_date)  # same meaning really as their top one
 
     ''' Setting Asset_mix to the correct table based on the given asset class '''
@@ -486,7 +406,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
                     bond_krd = bond_krd.reset_index().drop(bond_krd.columns[[0, 1]], axis=1).drop('index',
                                                                                                   axis=1).to_numpy()
 
-                    ''' Getting the solved weights from solution_df '''
+                    ''' Getting the solved weights from solution_df ''' # TODO! could have issue, solved weights is wrong, step that matters
                     weights = solution_df.loc[
                         (solution_df['portfolio'] == 'Total') & (solution_df['rating'] == bond_rating)].drop(
                         columns={'portfolio', 'rating'}).to_numpy().reshape(-1, 1)
@@ -605,7 +525,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
     solution_df = pd.concat([solution_df, surplus_table], ignore_index=True)
 
     ''' Rounds the solution to 4 decimals'''
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(4)
+    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(5) # 4
 
     # print(solution_df)
     # print(asset_type)
@@ -616,6 +536,8 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
 # Wrapper function for optimization; provide given KRDs or have optim function call KRD function
 def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMonthBS=False):
     # KRDs = reading_asset_KRDs(given_date)  # can only use objects to solve this code complexity peprhaps (this is diff so far with orig, where orig used for mP and this benchmarking atm needs - consider objects or structures (consider file layout) to feed tetc)
+
+    # KRDs = KRDs.copy() # TODO: is this needed?
 
     sheet_version = 1  # segments
     sol_df_seg = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version)
@@ -648,43 +570,6 @@ def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMon
     return sol_df
 
 
-def get_user_info():  # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
-    """
-    Retrieves command-line arguments and converts them to usable date objects.
-
-    Returns:
-    Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
-        - args: Parsed command-line arguments.
-        - GivenDate: The date for the optimization (current date if not provided).
-        - OU_Date: The over/under date for liabilities (defaults to GivenDate if not provided).
-    """
-    parser = argparse.ArgumentParser(description="Portfolio Optimization Tool")
-    parser.add_argument("-d", "--GivenDate", type=str, help="Use YYYY-MM-DD to set the Date for the calculation.")
-    # parser.add_argument("-o", "--OU_Date", type=str, help="Use YYYY-MM-DD to use specific over_under_assetting file")
-    # parser.add_argument('-c', '--create', action='store_true', help='Include this if the liabilities for the selected date have not yet been uploaded to the db')
-
-    # for benchmarking, if desired
-    parser.add_argument('-cb', '--curMonthBS', action='store_true',
-                        help='include to run economics with current month balance sheet instead of previous')  # we give it balance sheet
-
-    # Optional for specific outputs (mortgages, publics, privates)
-    parser.add_argument("-m", "--mortgage", action='store_true',
-                        help="Include to generate output for mortgages, or leave all 3 blank to do all 3")
-    parser.add_argument("-pb", "--public", action='store_true',
-                        help="Include to generate output for publics, or leave all 3 blank to do all 3")
-    parser.add_argument("-pv", "--private", action='store_true',
-                        help="Include to generate output for privates, or leave all 3 blank to do all 3")
-
-    # Parse arguments
-    args = parser.parse_args()
-
-    # Convert GivenDate or use current date
-    if args.GivenDate is None:
-        GivenDate = dt.datetime.now()
-    else:
-        GivenDate = conversions.YYYYMMDDtoDateTime(args.GivenDate)
-
-    return args, GivenDate
 
 # def run_solutions()
 

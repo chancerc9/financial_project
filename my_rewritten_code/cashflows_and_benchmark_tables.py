@@ -1,33 +1,14 @@
-# FILENAME OUTPUTTED/OUTPUTTED to is STARTDATE, that is, folder of 2024-05-31 (named) in Test/benchmarkingoutputs/...
-# -d "2024-05-31" -c -o "2024-08-30"
-#
 """
-There are many ways this script can be used.
+Name:
 
-It is "safe" to be ran as many times as warranted.
+Purpose:
 
-SPF_BM and SPF_BM_DETAILS can be deleted at any point, provided any new forecasts are manually re-added.
 
-When ran as main, without any arguments:
-   It will do the analysis for today (using 6PM cut-off logic.)
-   
-   This uses DoAnalysis()
-   
-When ran as main, with arguments:
-   It will do the analysis as if it was ran on another date.
-   
-   This uses DoAnalysis()
+Functions:
 
-When imported, 
-    It can be ran for a specific day, or a range of dates using 
-    
-    Use RunOnHistoricDay() and RunOnRange()
 
-From command line or process control:
+Side effects:
 
-    It can be ran on a specific day, or a range of dates, historically will cause an over-write, if it's in the future, it'll be over-written when it become history.
-
-In all cases, if dates provided are historic it will cause an over-write, since only one "asofdate" per security is allowed in the database.
 """
 import json
 from scipy.optimize import minimize
@@ -107,9 +88,14 @@ class Curves:
 """
 
 
-def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, solution_df, given_date, asset_type='public', curMonthBs=False):
+def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, IndexTable: pd.DataFrame, solution_df, given_date, asset_type='public', curMonthBs=False):
     # Adjust solution_df portfolio names to standardize column names for processing
+
+    # Data protection:
     benchmarking_solution = solution_df.copy()
+    FTSE_Universe_data = FTSE_Universe_data.copy()
+    ftse_data = IndexTable.copy()
+
     benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
     benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace({'Total': 'TOTAL',
                                                                                      'np': 'NONPAR',
@@ -122,7 +108,7 @@ def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, solution_df,
                                                                                      # Load necessary FTSE data, weights, and asset mix information
     # ftse_data = helpers.get_ftse_data(given_date)
     weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
-    ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type)
+    # ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type) # This index table is perfect to use actually - create_index_table comes before create summed cashflows
 
     """ new code; can place in class"""
     bond_curves = helpers.get_bond_curves(given_date)
@@ -372,6 +358,269 @@ def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, solution_df,
     return summed_cfs_dict
 
 
+def create_summed_cashflow_tables_old_working(FTSE_Universe_data: pd.DataFrame, solution_df, given_date, asset_type='public', curMonthBs=False):
+    # Adjust solution_df portfolio names to standardize column names for processing
+    benchmarking_solution = solution_df.copy()
+    benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
+    benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace({'Total': 'TOTAL',
+                                                                                     'np': 'NONPAR',
+                                                                                     'group': 'GROUP',
+                                                                                     'Accum': 'ACCUM',
+                                                                                     'Payout': 'PAYOUT',
+                                                                                     'ul': 'UNIVERSAL',
+                                                                                     'Surplus': 'SURPLUS'})
+
+                                                                                     # Load necessary FTSE data, weights, and asset mix information
+    # ftse_data = helpers.get_ftse_data(given_date)
+    weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
+    ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type) # This index table is perfect to use actually - create_index_table comes before create summed cashflows
+
+    """ new code; can place in class"""
+    bond_curves = helpers.get_bond_curves(given_date)
+    shock_tables = helpers.create_shock_tables(bond_curves, given_date) # use a rating for bond classes (shock tables is general tho, can be decoupled outside and passed
+    # Shock can be a class inherited by Curves or v.v.
+    """end of new code"""
+
+
+
+    # Load asset mix for the specified asset type and adjust names if needed
+    df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date, curMonthBS=curMonthBs)
+    """
+    if asset_type == 'private':
+        asset_mix = df_private
+    elif asset_type == 'mortgage':
+        asset_mix = df_mortgage
+    else:
+        asset_mix = df_public
+    asset_mix.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}, inplace=True)
+    asset_mix.rename(columns={'Accum': 'ACCUM', 'group': 'GROUP', 'np': 'NONPAR', 'Payout': 'PAYOUT', 'Total': 'TOTAL',
+                              'ul': 'UNIVERSAL', 'Surplus': 'SURPLUS'}, inplace=True)
+
+    # Prepare the cashflow data for each rating
+    cf = helpers.create_cf_tables(helpers.get_ftse_data(given_date))
+    cfs = {}
+    summed_cfs_dict = {}
+    """
+    if asset_type == 'private':
+        asset_mix = df_private
+        asset_mix.rename(
+            index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'},
+            inplace=True)
+    elif asset_type == 'mortgage':
+        asset_mix = df_mortgage
+        asset_mix.rename(index={'corporateBBB': 'CorporateBBB'}, inplace=True)
+    else:
+        asset_mix = df_public
+        asset_mix.rename(
+            index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'},
+            inplace=True)
+
+    asset_mix.rename(columns={'Accum': 'ACCUM', 'group': 'GROUP', 'np': 'NONPAR', 'Payout': 'PAYOUT', 'Total': 'TOTAL', 'ul': 'UNIVERSAL', 'Surplus':'SURPLUS'}, inplace=True)
+    cf = helpers.create_cf_tables(FTSE_Universe_data)
+    # cfs = {}
+
+    summed_cfs_dict = {}
+
+    # date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
+    # benchmarking_solution.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}) # renames but boilerplate code here
+
+    for portfolio in ['NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'SURPLUS', 'TOTAL']:
+        date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
+        # Initialize DataFrames to hold summed cashflows and carry data for each portfolio
+        summed_cfs = pd.DataFrame({'date': date_range})
+        carry_table = pd.DataFrame(columns=['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB'],
+                                   index=['market Value', 'Average Yield'])
+
+        """interesting: can probably replace with my code"""
+        if asset_type == 'mortgage':
+            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index(
+                'rating').drop(columns='portfolio').rename(index={'corporateBBB': 'CorporateBBB'})
+        else:
+            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index(
+                'rating').drop(columns='portfolio').rename(
+                index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA',
+                       'corporateBBB': 'CorporateBBB'})
+
+        """end of lol"""
+
+        # Isolate the solution weights for this portfolio, adjusting by asset type and rating
+        # TODO: I commented out this line of code:
+        # portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating') # This might be the line of code that was causing the CorpBBB Error
+        for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB']:
+            # Skip ratings that are not applicable for this asset type
+            if ((asset_type == 'mortgage') & ((portfolio == 'UNIVERSAL') or ((rating != 'Federal') & (rating != 'CorporateBBB')))) or \
+               ((asset_type == 'private') & ((rating == 'Federal') or (rating == 'Provincial'))):
+                carry_table.loc['market Value', rating] = 0
+                carry_table.loc['Average Yield', rating] = 0
+                summed_cfs[rating] = 0
+                continue
+
+            """part of new code, can fix by Shock class and retrieve for Curve etc"""
+            ups = shock_tables[rating + ' - Up'] # can also be down lmao; just specific to the RATING not the up/down
+            pv_bond_curve = ups.iloc[:, 0]
+            """ end of new code"""
+            # Dataframe
+            cfs_rating_df = cf[rating].iloc[:, 3:] # Shape: (70, 70) where
+            # (rows: buckets, columns: term_intervals (time))
+
+            # Arrays or scalars (numpy)
+            pv_array = cf[rating + 'PV'].values # Shape: (70,)
+
+            # Replace pv_array with pv_actual TODO!:
+            # Select the relevant portion of the cashflows DataFrame
+            # cashflows_selected = cfs_rating_df = cashflows[rating].iloc[:70, 3:]
+
+            # Perform element-wise multiplication and then sum along the rows
+            # # pv_vectorized = (cashflows_selected * ups.iloc[:, 0].values).sum(axis=1) # vectorized equivalent to green code
+            # # pv_vectorized = (cfs_rating_df * ups.iloc[:, 0].values).sum(axis=1)  # vectorized equivalent to green code
+            # keep:
+            # pv_bond_curve = ups.iloc[:, 0]
+            pv_vectorized = cfs_rating_df.values @ ups.iloc[:, 0].values
+            pv_array = pv_vectorized # Shape: (70,) -  as needed or expected!
+            # Can print actual PV if wished
+            # print(pv_array)
+
+            # write to excel
+            cur_date = given_date.strftime('%Y%m%d')
+            path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
+                                'Brenda', 'pv_actuals', cur_date)
+            os.makedirs(path, exist_ok=True)
+
+            pv_array_df = pd.DataFrame(pv_array)
+
+            # """temp comment out
+            file_path = os.path.join(path, f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx')
+            if not os.path.exists(file_path):
+                with pd.ExcelWriter(file_path) as writer:
+                    pv_array_df.to_excel(writer, sheet_name='Sheet1', index=False)  # Rows are payments, cols are buckets
+            # """
+            # end of write to excel
+
+            # green code:
+            #pv_array = np.sum(cf[rating].iloc[i, 3:] * ups.iloc[:, 0])  # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values; of discounted curves
+            #average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / pv
+
+            solutions_values = portfolio_solution.loc[rating].values # Shape: (6,)
+            market_value = asset_mix.loc[rating, portfolio] # Shape: ()
+
+            # 1. Scale solutions up by market_value (PV of solutions):
+            sol_scaled_mv = market_value * solutions_values # Shape: (6,), can be array of 0s
+            # where (weights for 6 buckets array)
+
+            sol_scaled_mv = np.nan_to_num(sol_scaled_mv, nan=0.0)
+
+            # Dataframes: Cashflow calculations
+
+            # 2. Scale cfs down by PV:
+            cfs_rating_df = cfs_rating_df.div(pv_array, axis=0) # Applies pv_array on the columns of cfs_rating_df
+                                                                #  i.e., across the buckets (since PV is arr of PV of *buckets*)
+            # TODO: See if can replace the numpy to df
+            cfs_rating_df = cfs_rating_df.replace([np.inf, -np.inf], np.nan).fillna(0) # Replace inf and NaN values with 0
+            # Shape: (70, 70) where
+            # (rows: buckets, columns: term_intervals (time), values: scaled by PV)
+
+            weights_df = weights[rating].iloc[:, 3:] # Shape: (70, 6) where
+            # (rows: buckets (70), columns: buckets (intervals))
+            #  values: percentage of each bucket 70 in the bucket 6 intervals.
+
+            # Remember that A @ B applies the columns of B on the rows of A to produce the column elements of C (result)
+
+            # 3. Apply weight transformation to cfs to aggregate into 6 buckets (result: 70 time, 6 buckets, values cfs):
+
+            # cfs_rating_df.T has shape of (time: 70, buckets: 70)
+            # Aggregates the 70 buckets into 6 buckets
+
+            # can have PV actuals (pv of cashflows) written to excel and the ftse pvs#  TODO!:
+
+
+            cfs_condensed_numpy = cfs_rating_df.values.T @ weights_df.values # Shape: (time: 70, buckets: 6)
+            # (time: 70, buckets: 6)
+
+            # Cashflows in 6 buckets divided by PV
+            cfs_aggregated_6_buckets = np.nan_to_num(cfs_condensed_numpy, nan=0.0) # Shape: (time: 70, buckets: 6) for (row, col)
+
+
+            # 4. Print or write to excel for PV adjusted CFs aggregated in 6 buckets
+            cfs_condensed_df = pd.DataFrame(cfs_aggregated_6_buckets)
+
+            cur_date = given_date.strftime('%Y%m%d')
+            path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
+                                'Brenda', 'benchmarking_tables', cur_date)
+            os.makedirs(path, exist_ok=True)
+
+            #"""temp comment out
+            file_path = os.path.join(path, f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx')
+            if not os.path.exists(file_path):
+                with pd.ExcelWriter(file_path) as writer:
+                    cfs_condensed_df.to_excel(writer, sheet_name='Sheet1', index=False)   # Rows are payments, cols are buckets
+            #"""
+            # 5. Perform a SUMPRODUCT of matrix and solutions on correct dimensions
+
+            # matrix * array performs PRODUCT of array on buckets of matrix - applies on each row
+            # then, matrix @ array performs SUMPRODUCT (it completes the sum across the cols, or of each row, step after it)
+            # (so, the second performs the summation or dot product across each row)
+
+            # cfs_aggregated_6_buckets has (time, buckets) and sol_scaled_mv has (buckets'_weights)
+            # so scales the buckets for solutions :) across the cashflow times
+
+            # Shape: (70,) yay!
+            # final_CFs_rating_arr = np.nan_to_num((cfs_rating_df.values.T @ weights_df.values), nan=0.0) @ np.nan_to_num(sol_scaled_mv, nan=0.0)
+            final_CFs_rating_arr = cfs_aggregated_6_buckets @ sol_scaled_mv # thanks, braodcasting, for applying array across the cols (it broadcasts array to be a col here from matrix # 2)
+            # Note that portfolio_solution for NONPAR portfolio and Federal rating is 0, so that this is 0 as well - could put a condition that checks for this rather
+            #  than doing all the operation? e.g., if portfolio_solution = 0, then continue (skip) with the 0 final cfs lol
+            # NOTE: final_CFs final_CFs_rating_arr are in semi_annual payments across 70 terms for a rating (so an array)
+
+            # date_range = pd.date_range(given_date, periods=420, freq='M')
+            # summed_cfs = pd.DataFrame({'date': date_range})
+            # summed_cfs['rating'] = 0
+
+            # TODO: can fix to be better!
+
+            # Generate half-year dates starting from given_date + 6 months
+            # Push first cashflow generation to 6mo afterward
+            start_date = given_date + pd.DateOffset(months=6)
+
+            # Generate half-year dates
+            # half_year_dates = pd.date_range(given_date, periods=70, freq='6M')
+            half_year_dates = pd.date_range(start=start_date, periods=70, freq='6M') # test 70 temporarily
+
+            # Create an indexer to populate summed_cfs['rating']
+            for i, date in enumerate(half_year_dates):
+                summed_cfs.loc[summed_cfs['date'] == date, rating] = final_CFs_rating_arr[i]
+
+
+            """
+
+            """
+            # fill summed_cfs NAN or summed_cfs[rating] NaN with 0
+            df = ftse_data.loc[ftse_data['RatingBucket'] == rating]
+            if df['Benchmark ' + portfolio + ' weight'].sum() == 0:
+                yield1 = 0
+            else:
+                yield1 = (df['Benchmark ' + portfolio + ' weight'] * df['yield']).sum() / df[
+                    'Benchmark ' + portfolio + ' weight'].sum()
+            carry_table.loc['market Value', rating] = market_value
+            carry_table.loc['Average Yield', rating] = yield1
+
+            """
+            # Carry table calculations (optional, depending on analysis needs)
+            df = ftse_data.loc[ftse_data['RatingBucket'] == rating]
+            yield1 = (df['Benchmark ' + portfolio + ' weight'] * df['yield']).sum() / max(1, df['Benchmark ' + portfolio + ' weight'].sum())  # yoo this is how you weight it!
+            carry_table.loc['market Value', rating] = market_value
+            # Runs fine until here?
+            carry_table.loc['Average Yield', rating] = yield1 # here line cannot evaluate - guess the carry table and bm codes lol to match - i can fix and und later - more consistent would be nice haha - less hardcoding in gen
+            """
+
+        # TODO: Runs fine until here
+
+        # Format and finalize DataFrame with carry table
+        summed_cfs['date'] = pd.to_datetime(summed_cfs['date']).dt.strftime('%b-%Y') # is it this???
+        summed_cfs = pd.concat([carry_table, summed_cfs.set_index('date')])
+
+        # Store results in the final output dictionary
+        summed_cfs_dict[portfolio] = summed_cfs.fillna(0)
+
+    return summed_cfs_dict
 
 # For the Custom Benchmarks
 ''' This function is currently used for creating the summary tables, which only contain info about the portfolio balances '''
@@ -408,7 +657,7 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
 
     # ftse_data = helpers.get_ftse_data(given_date) # separate it out so it runs faster
 
-    weights, totals = helpers.create_weight_tables(ftse_data)
+    weights, totals = helpers.create_weight_tables(ftse_data) # can remove out
 
     ''' Calculates the weight of bonds over 35 years within the ftse universe '''
     # TODO! changed 35 to 35.25 - removed this NON_over_25y
