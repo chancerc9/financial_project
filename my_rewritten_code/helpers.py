@@ -17,7 +17,7 @@ import json
 import os
 import sys
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Any
 
 # Third-party library imports
 import numpy as np
@@ -37,6 +37,7 @@ from equitable.infrastructure import jobs, sendemail, sysenv
 
 # Required custom modules
 import file_utils
+import model_portfolio_process as mp
 
 # Pandas configuration
 pd.set_option('display.width', 150)
@@ -55,9 +56,6 @@ General_conn = SmartDB('General')
 General_cur = General_conn.con.cursor()
 
 
-# for the (?), double-check through terminology
-import model_portfolio_process as mp
-
 ### CODE ###
 
 #class GetData:
@@ -66,9 +64,10 @@ import model_portfolio_process as mp
 #class CreateShocks:
 
 
+## Beginning of code ##
+
 # 1. Get bond curves and process (add half-year intervals, choose) - replaces get_bond_curves() and - functionality
 
-## Beginning of code ##
 
 def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     """
@@ -264,9 +263,10 @@ def create_semi_annual_bond_curves(curves) -> pd.DataFrame: # curves from ftse c
     return curves_mod
 
 
+# Does NOT modify bond curves parameter; assigns to new value from reference data by dereferencing value
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
-def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
+def create_shock_tables(curves, GivenDate: datetime) -> dict[str, Any]: # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
     """
     Function to create up and down shock tables for bond curves
     """
@@ -275,7 +275,6 @@ def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (
     up_shocks = create_general_shock_table() # creates a df with col named '0', '1', etc
     # """old code
 
-    # TODO! Write to excel, needs to objectify it
 
     cur_date = GivenDate.strftime('%Y%m%d')
 
@@ -327,7 +326,6 @@ def create_shock_tables(curves, GivenDate: datetime): # CURVES are BOND CURVES (
     # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
     os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
     file_utils.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
-
 
     #### (*end)
 
@@ -552,15 +550,11 @@ def calc_pv(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     return pv
 
 
-
-### Begin
-
 ## USED FUNCTIONs ##
 
 # (*end)
 
 ## USED FUNCTION ##
-
 def create_cf_tables(ftse_data): #, GivenDate: pd.Timestamp):
     # uses the average coupon rate to calculate annual cashflows for each rating type
     cf_dict = {}
@@ -589,85 +583,9 @@ def create_cf_tables(ftse_data): #, GivenDate: pd.Timestamp):
         cf_dict[rating + 'PV'] = df.iloc[:, 73]
 
     return cf_dict
-# Remove GivenDate arg for the run_code.py
-# Add GivenDate arg for model_portfolio.py
 
 # Input: ftse_data - a DataFrame containing bond information.
 # Output: cf_dict - a dictionary of cashflow tables and their respective present values for each bond rating.
-def create_cf_tables_NEW_Oct11_runs_gotta_fix_formula(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> Dict[str, pd.DataFrame]:
-        # uses the average coupon rate to calculate annual cashflows for each rating type
-
-    """
-    Creates cashflow tables for each bond rating based on FTSE data. (creates the tables for 70 buckets)
-
-    This function calculates annual cashflows for different bond rating types based on the FTSE data.
-    It creates a cashflow table for each rating and calculates the present value (PV) and coupon rates for each term bucket.
-
-    Uses:
-    calc_avg_coupon (notional weighting) to calc each bucket
-    calc_avg_pv to calc each bucket
-
-    Parameters:
-    ftse_data (pd.DataFrame): A DataFrame containing bond information.
-
-    Returns:
-    Dict[str, pd.DataFrame]: A dictionary of cashflow tables and their respective present values for each bond rating.
-    """
-
-    # TODO: new code!
-    annual_curves = get_bond_curves(GivenDate)
-    semi_annual_curves = create_semi_annual_bond_curves(annual_curves)
-    # used later for pv_two
-
-    #
-    cf_dict = {}  # Dictionary to store cashflow tables for each rating
-    years = list(np.linspace(start=0.5, stop=35, num=70))  # 70 half-year intervals (from 0.5 to 35 years)
-    buckets = list(np.linspace(start=0.5, stop=35, num=70))  # 70 term buckets (from 0.5 to 35 years)
-    #"""
-    # Unecessary, as overwritten within the loop each time. Hence, removal of this commented-out area:
-    # Create an empty DataFrame with columns for each year and rows for each bucket
-    df = pd.DataFrame(columns=years, index=buckets)
-    df.insert(0, 'Bucket', buckets)  # Add a 'Bucket' column representing the term
-    df.insert(1, 'Principal', 100)  # Initialize with a default principal value of 100
-    #"""
-    # Iterate through each bond rating type to calculate cashflows
-    for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        # Create a new DataFrame for the current rating
-        df = pd.DataFrame(columns=years, index=buckets)
-        df.insert(0, 'Bucket', buckets)  # Term buckets
-        df.insert(1, 'Principal', 100)   # Default principal value of 100
-
-        # Calculate present value (PV) and average coupon for each bucket
-        df['PV'] = df.apply(lambda row: calc_pv(row['Bucket'], rating, ftse_data), axis=1) # TODO: not needed (NEW) - old v.
-        df['Coupon'] = df.apply(lambda row: calc_avg_coupon(row['Bucket'], rating, ftse_data), axis=1)
-
-        # Move the coupon column to after 'Principal'
-        coupons = df.pop(df.columns[-1])
-        df.insert(2, 'Coupon', coupons)
-
-        # Calculate cashflows for each term bucket based on coupon and principal
-        for col in np.linspace(start=0.5, stop=35, num=70):
-            df[col] = df.apply(lambda row: row['Coupon'] if row['Bucket'] > col
-            else ((row['Coupon'] + row['Principal']) if row['Bucket'] == col else 0), axis=1) # calcs couponscalc
-
-        # Store the cashflow table and PV table for the rating
-        cf_dict[rating] = df.iloc[:, :73]  # Cashflow table
-
-        # TODO: read TODO in slack and implement change here / in the thingy (function)
-        df.iloc[:, 73] = calc_pv_two(cf_dict[rating], rating, semi_annual_curves[rating]) # TODO: NEW (replaces the NEW above)
-
-        # I need to sum it lol
-        cf_dict[rating + 'PV'] = df.iloc[:, 73]  # Present value
-
-
-
-    return cf_dict
-
-
-# you can data transform it first
-# THEN do the code
-# do it fast then it'll be well
-
 
 def create_sensitivity_tables(cashflows: Dict[str, pd.DataFrame], shocks: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
@@ -893,48 +811,6 @@ def make_krd_table(weights: Dict[str, pd.DataFrame], sensitivities: Dict[str, pd
 
 # TODO: Remove!
     # makes the final KRD table based on sensitivities and market weight and puts it all together in one dataframe
-def make_CFs_buckets_table_error(weights: Dict[str, pd.DataFrame], cashflows_seventy: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """
-    Creates the final Key Rate Duration (KRD) table by combining market weights and cashflow sensitivities for each bond rating.
-
-    Parameters:
-    weights (Dict[str, pd.DataFrame]): A dictionary of DataFrames containing market weights for each bond rating and maturity bucket.
-    sensitivities (Dict[str, pd.DataFrame]): A dictionary of DataFrames containing sensitivities for each bond rating and maturity bucket.
-
-    Returns:
-    pd.DataFrame: A combined KRD table for all bond ratings and term buckets.
-    """
-    cashflows_six = {}
-    columns = ['rating', 'term', 'bucket1', 'bucket2', 'bucket3', 'bucket4', 'bucket5', 'bucket6'] # range from 2 to 8 is values (buckets)
-
-    terms = np.arange(0.5, 35.5, 0.5) # buckets
-    terms_len = 70
-    # buckets = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30]
-
-    # Iterate over each bond rating to calculate KRD values
-    for rating in weights.keys(): # replace ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate'] with weights.keys
-        df = pd.DataFrame(columns=columns, index=range(terms_len))
-        df['term'] = terms   # Assign bucket terms to the DataFrame
-        df['rating'] = rating  # Set bond rating
-
-        # cashflows_seventy['Federal'].iloc[:, 1:71].values.shape = (70, 70)
-        # weights['Federal'].iloc[:, 1:71].values.shape = (70, 8)
-
-        # Calculate KRD by multiplying sensitivities with market weights for each bucket
-        for x in range(2, 8):  # see columns
-            df.iloc[:, x] = df.apply(lambda row: (
-                cashflows_seventy[rating].loc[cashflows_seventy[rating]['Bucket'] == row['term']].iloc[:, 1:].values[0] *
-                weights[rating].iloc[:, (x + 1)]
-            ).sum(), axis=1)  # TODO: no change this part!
-
-        cashflows_six[rating] = df  # Store KRD DataFrame in the dictionary
-
-    # Concatenate all rating-specific KRD DataFrames into one final DataFrame
-    final_krd_df = pd.concat([cashflows_six['Federal'], cashflows_six['Provincial'], cashflows_six['CorporateAAA_AA'],
-                              cashflows_six['CorporateA'], cashflows_six['CorporateBBB'], cashflows_six['Corporate']], ignore_index=True)
-
-    final_krd_df.fillna(0, inplace=True)  # Replace NaN values with 0
-    return final_krd_df
 
 
 def make_CFs_buckets_table(weights: Dict[str, pd.DataFrame],
@@ -984,39 +860,6 @@ def make_CFs_buckets_table(weights: Dict[str, pd.DataFrame],
 
 import os
 from datetime import datetime
-
-def getBSPath_unneeded(date: datetime) -> str:
-    """
-    Generates the file path for the Segmented Balance Sheet (SBS) file based on the provided date.
-
-    Parameters:
-    date (datetime): The date for which to retrieve the SBS file path.
-
-    Returns:
-    str: The file path for the Segmented Balance Sheet file.
-    
-    Raises:
-    Exception: If the file path is not found.
-    """
-    bsFileName = 'SEGMENTED BALANCE SHEET-{year}.xlsx'
-    # bsPathRoot = '\\\\estorage.equitable.int\\pcshared\\Financial Reporting\\Segmented Balance Sheets\\'
-    bsPathRoot = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking')
-
-    # Construct paths for the current year and the previous year
-    current_year_path = os.path.join(bsPathRoot, bsFileName.format(year=date.strftime('%Y')))  # (*Brenda:) Removes the error if used on MacOS/Linux systems (uses OS.path.join over manual concatenation using Windows-assumed '\\')
-    prev_year_path = os.path.join(bsPathRoot, bsFileName.format(year=str(date.year - 1)))
-
-    # Check if the current year's file exists, else look in prior years' folder
-    if os.path.exists(current_year_path):
-        path = current_year_path
-    else:
-        path = os.path.join(bsPathRoot, 'Prior Years', date.strftime('%Y'), bsFileName.format(year=date.strftime('%Y')))
-
-    # Raise an exception if the file path doesn't exist
-    if not os.path.exists(path):
-        raise Exception(f'Path not found: {path}')  # (*Brenda: Shifted error messaging to be more consistent formatting)
-
-    return path
 
 
 

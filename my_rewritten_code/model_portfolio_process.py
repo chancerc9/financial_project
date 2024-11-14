@@ -1,34 +1,4 @@
 """
-There are many ways this script can be used.
-
-It is "safe" to be ran as many times as warranted.
-
-SPF_BM and SPF_BM_DETAILS can be deleted at any point, provided any new forecasts are manually re-added.
-
-When ran as main, without any arguments:
-   It will do the analysis for today (using 6PM cut-off logic.)
-
-   This uses DoAnalysis()
-
-When ran as main, with arguments:
-   It will do the analysis as if it was ran on another date.
-
-   This uses DoAnalysis()
-
-When imported,
-    It can be ran for a specific day, or a range of dates using
-
-    Use RunOnHistoricDay() and RunOnRange()
-
-From command line or process control:
-
-    It can be ran on a specific day, or a range of dates, historically will cause an over-write, if it's in the future, it'll be over-written when it become history.
-
-In all cases, if dates provided are historic it will cause an over-write, since only one "asofdate" per security is allowed in the database.
-"""
-# from adodbapi.examples.xls_read import sheet
-
-"""
     This provided code is a complex script that processes bond-related data, 
     calculates key rate durations (KRDs), and uploads the resulting sensitivities 
     to a database. 
@@ -87,7 +57,6 @@ LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
 
 ## Start of Model Portfolio code: ##
 
-
 """
 Mutates: Nothing
 """
@@ -121,7 +90,7 @@ def reading_asset_KRDs(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.D
     weights, totals = helpers.create_weight_tables(ftse_data)  # Makes a weight table for each bond rating and bucket
 
     cf_tables = helpers.create_cf_tables(
-        ftse_data)  # , GivenDate) # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
+        ftse_data)  # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100
     # TODO! temp GivenDate, can make it OOP class
     shock_tables = helpers.create_shock_tables(bond_curves,
                                                GivenDate)  # Makes 30 year up and down shock tables for each bond rating and bucket
@@ -194,11 +163,11 @@ def reading_asset_KRDs(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.D
 
 """
 Mutates: Nothing
-Helper that reading_asset_KRDs(GivenDate) relies on.
+Helper that reading_asset_KRDs(ftse_data, GivenDate) relies on.
 """
 # Reads in asset segments for liabilities:
 def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
-                      sheet_version: int = 1):  # -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                      sheet_version: int = 1) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Reads and calculates the asset mix for liabilities based on the given date.
 
@@ -533,16 +502,21 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
     return solution_df
 
 
-# Wrapper function for optimization; provide given KRDs or have optim function call KRD function
 def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMonthBS=False):
-    # KRDs = reading_asset_KRDs(given_date)  # can only use objects to solve this code complexity peprhaps (this is diff so far with orig, where orig used for mP and this benchmarking atm needs - consider objects or structures (consider file layout) to feed tetc)
+    """
+    Wrapper function for optimization; provide given KRDs or have optimization worker function call KRD function.
 
-    # KRDs = KRDs.copy() # TODO: is this needed?
+    Optim worker function creates a copy of KRDs for no propogation of changes.
+    """
 
-    sheet_version = 1  # segments
-    sol_df_seg = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version)
-    sheet_version = 0  # totals
-    sol_df_tot = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version)
+    # KRDs = KRDs.copy() # Unneeded
+
+    # Obtain optimized solution dfs:
+
+    # Segments:
+    sol_df_seg = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version=1) # segments = 1
+    # Totals:
+    sol_df_tot = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version=0) # totals = 0
 
     def overwrite_total_rows(sol_df_seg, sol_df_tot):
         """
@@ -570,9 +544,3 @@ def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMon
     return sol_df
 
 
-
-# def run_solutions()
-
-# def run_cashflows()
-
-# def run_custom_benchmarks()
