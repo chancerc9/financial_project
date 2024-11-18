@@ -214,6 +214,51 @@ class FTSEDataHandler:
 
 
 
+"""Queries, not encapsulated:
+"""
+# ---- Non encapsulated objects -----
+
+# Queries or things that effectively cause no mutation on external or parameter objects: includes get_bond_curves, create_general_shock_tables() can be placed in one file
+def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
+    """
+    Retrieves and processes bond curves from the database for a given date. Bond curves remain annual curves as current.
+
+    Parameters:
+    GivenDate (datetime): The date for which bond curves are retrieved.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing processed bond curves with selected bond types.
+    """
+    # SQL query to retrieve bond curve data from the database for the given date
+    get_bond_curves_query = f"""
+                    SELECT *
+                    FROM bondcurves_byterm
+                    WHERE date= '{GivenDate.date()}' 
+                    """
+
+    # Query to retrieve column names from the bond curves table
+    get_column_names_query = '''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'bondcurves_byterm';'''
+    col_names = [name[0] for name in execute_table_query(get_column_names_query, 'General', fetch=True)]
+
+    # Execute the query and create a DataFrame with the result
+    df = pd.DataFrame(execute_table_query(get_bond_curves_query, 'General', fetch=True), columns=col_names)
+
+    # Clean the DataFrame by removing unnecessary columns and transposing it
+    df.set_index('name', inplace=True)
+    df.drop(['date', 'curvetype'], axis=1, inplace=True)
+    df = df.transpose()
+    df.reset_index(inplace=True)
+
+    # Select and rename specific bond categories for further analysis
+    df = df[['CANADA', 'Provincial', 'AAA & AA', 'A', 'BBB', 'Corporate']]
+    df.rename(columns={'CANADA': 'Federal', 'AAA & AA': "CorporateAAA_AA", 'A': 'CorporateA', 'BBB': 'CorporateBBB'},
+              inplace=True)
+
+    # Shift and divide by 100 to normalize the rates
+    df = df.shift()[1:]
+    df = df / 100
+
+    return df  # Returns df: a Dataframe of bond curves for all years, per annum (IIRC)
 
 
 

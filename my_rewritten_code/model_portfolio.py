@@ -107,6 +107,9 @@ def main():  # model_portfolio.py new version
         path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', cur_date) - old (normal)
         """
 
+        bond_curves = datahandler.get_bond_curves(
+                GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years)
+
 
         # Begin process:
 
@@ -125,13 +128,25 @@ def main():  # model_portfolio.py new version
         # 2. Get cashflows
 
         # 3. Get KRDs from cashflows - Gets info using copy of ftse data
-        KRDs = model_portfolio.reading_asset_KRDs(ftse_handler.data, GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
+        KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data, GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
 
+        print(f"KRDs.head() initially {KRDs.head()}")
+        print(f"KRDs.tail() initially {KRDs.tail()}")
+
+        # Test code to keep; verified: KRDs does not change, which is good and means useable
+        import copy
+        copied = copy.deepcopy(KRDs)
+
+        # fast initially tho may take a bit or few of mem
 
         # ftse_data = helpers.get_ftse_data(GivenDate)            # Gets ftse bond info from our database
 
+        CURR_DEBUGGING_PATH = os.path.join(OUTPUT_DIR_PATH, 'Debugging_Steps')
+        # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
+        os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
+
         # Output items:
-        file_utils.write_results_to_excel_one_sheet(ftse_data,OUTPUT_DIR_PATH,cur_date,'ftse_data') # for ftse data
+        file_utils.write_results_to_excel_one_sheet(ftse_data,CURR_DEBUGGING_PATH,cur_date,'ftse_data') # for ftse data
 
 
         # Optimization function uses .copy()
@@ -162,6 +177,13 @@ def main():  # model_portfolio.py new version
 
             # Benchmarking code: , curMonthBS=args.curMonthBS)
 
+        print(f"KRDs.head() after running other functions: {KRDs.head()}")
+        print(f"KRDs.tail() after running other functions: {KRDs.tail()}")
+
+        if copied.equals(KRDs):
+            print("No changes were made to KRDs data")
+        else:
+            print("The data has been modified")
 
         # Creates solutions folder:
         solutions_path = OUTPUT_DIR_PATH + '/solutions' + cur_date + '.xlsx' # folder_path used to be var path - old (Normal)
@@ -174,7 +196,8 @@ def main():  # model_portfolio.py new version
                     private_solution.to_excel(writer, sheet_name='private_solution')
                 if args.mortgage or do_all:
                     mort_solution.to_excel(writer, sheet_name='mortgage_solution')
-                model_portfolio.reading_asset_KRDs(ftse_handler.data, GivenDate).to_excel(writer, sheet_name='asset KRDs')
+                # model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data, GivenDate).to_excel(writer, sheet_name='asset KRDs')
+                KRDs.to_excel(writer, sheet_name='asset KRDs') # see if works lol
                 model_portfolio.reading_asset_mix(GivenDate)[0].to_excel(writer, sheet_name='public asset mix')
                 model_portfolio.reading_asset_mix(GivenDate)[1].to_excel(writer, sheet_name='private asset mix')
                 model_portfolio.reading_asset_mix(GivenDate)[2].to_excel(writer, sheet_name='mort asset mix')
@@ -195,7 +218,7 @@ def main():  # model_portfolio.py new version
             data_mort = cashflows_and_benchmark_tables.create_indexData_table(mort_solution, GivenDate, ftse_handler.data, asset_type='mortgage')
 
             # Data is protected here:
-            summed_cashflows_mort = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_mort, mort_solution, GivenDate, asset_type='mortgage',
+            summed_cashflows_mort = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_mort, mort_solution, GivenDate, asset_type='mortgage',
                                                                   curMonthBs=args.curMonthBS)
 
 
@@ -205,7 +228,7 @@ def main():  # model_portfolio.py new version
             data_public = cashflows_and_benchmark_tables.create_indexData_table(public_solution, GivenDate, ftse_handler.data, asset_type='public')
 
             # Data is protected here:
-            summed_cashflows_public = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_public, public_solution, GivenDate, asset_type='public',
+            summed_cashflows_public = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_public, public_solution, GivenDate, asset_type='public',
                                                                     curMonthBs=args.curMonthBS)
         if args.private or do_all:
 
@@ -213,7 +236,7 @@ def main():  # model_portfolio.py new version
             data_private = cashflows_and_benchmark_tables.create_indexData_table(private_solution, GivenDate, ftse_handler.data, asset_type='private')
 
             # Data is protected here:
-            summed_cashflows_private = cashflows_and_benchmark_tables.create_summed_cashflow_tables(ftse_data, data_private, private_solution, GivenDate, asset_type='private',
+            summed_cashflows_private = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_private, private_solution, GivenDate, asset_type='private',
                                                                      curMonthBs=args.curMonthBS)
 
         custom_benchmarks_path = OUTPUT_DIR_PATH + '/Custom_benchmark_' + cur_date + '.xlsx'
@@ -222,6 +245,11 @@ def main():  # model_portfolio.py new version
         # Can probably check if_exist before running / creating Custom_benchmarks tables to just output some:
         # Solutions will ALWAYS run since needed for even 1 table
         # cashflows should always run IMO since part of both debugging and mandatory
+
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        print(f"Mem usage: {memory_info.rss} bytes")
 
         if not os.path.exists(custom_benchmarks_path):
             with pd.ExcelWriter(custom_benchmarks_path) as writer:

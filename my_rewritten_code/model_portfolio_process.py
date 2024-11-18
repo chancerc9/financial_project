@@ -60,7 +60,9 @@ LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
 """
 Mutates: Nothing
 """
-def reading_asset_KRDs(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.DataFrame:
+# Does NOT mutate bond_curves parameter .. wish there was uninforced const brr, can make bond_curves an object to distinguish between ftse data lol later # TODO!
+# reading_asset_KRDs: I will not mutate bond_curves here pledge. Lack of uninforced explicit documentation via type hinting is kinda lacking...
+def reading_asset_KRDs(bond_curves: pd.DataFrame, ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.DataFrame:
     """
     Creates the Key Rate Duration (KRD) table for assets on a given date.
     (Main method to create the KRD table for assets.)
@@ -81,8 +83,8 @@ def reading_asset_KRDs(ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.D
     pd.DataFrame: A DataFrame containing weighted sensitivities for each bond rating. For 6 buckets; used for optimizer.
     """
     # Retrieves bond curve data and FTSE bond info from our database
-    bond_curves = helpers.get_bond_curves(
-        GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years) - CLASSIFY so can use in multiple code and points of entry, including run_code; needs this all lol
+    #bond_curves = helpers.get_bond_curves(
+    #    GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years) - CLASSIFY so can use in multiple code and points of entry, including run_code; needs this all lol
     # ftse_data = helpers.get_ftse_data(GivenDate)  # Retrieve FTSE bond info (all required data)
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables
@@ -509,9 +511,10 @@ def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMon
     Optim worker function creates a copy of KRDs for no propogation of changes.
     """
 
-    # KRDs = KRDs.copy() # Unneeded
+    # KRDs = KRDs.copy() # Unneeded (since below optim fns do not modify reference of krds)
 
     # Obtain optimized solution dfs:
+    # Does NOT modify the reference of KRDs
 
     # Segments:
     sol_df_seg = optimization_worker(KRDs, given_date, asset_type, curMonthBS, sheet_version=1) # segments = 1

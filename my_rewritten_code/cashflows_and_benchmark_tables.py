@@ -88,13 +88,14 @@ class Curves:
 """
 
 
-def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, IndexTable: pd.DataFrame, solution_df, given_date, asset_type='public', curMonthBs=False):
+def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data: pd.DataFrame, IndexTable: pd.DataFrame, solution_df, given_date, asset_type='public', curMonthBs=False):
     # Adjust solution_df portfolio names to standardize column names for processing
 
     # Data protection:
     benchmarking_solution = solution_df.copy()
     FTSE_Universe_data = FTSE_Universe_data.copy()
     ftse_data = IndexTable.copy()
+    bond_curves = bond_curves.copy()
 
     benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
     benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace({'Total': 'TOTAL',
@@ -111,7 +112,7 @@ def create_summed_cashflow_tables(FTSE_Universe_data: pd.DataFrame, IndexTable: 
     # ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type) # This index table is perfect to use actually - create_index_table comes before create summed cashflows
 
     """ new code; can place in class"""
-    bond_curves = helpers.get_bond_curves(given_date)
+    # bond_curves = helpers.get_bond_curves(given_date)
     shock_tables = helpers.create_shock_tables(bond_curves, given_date) # use a rating for bond classes (shock tables is general tho, can be decoupled outside and passed
     # Shock can be a class inherited by Curves or v.v.
     """end of new code"""
