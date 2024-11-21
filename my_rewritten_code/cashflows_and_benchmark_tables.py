@@ -139,17 +139,13 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
     """
     if asset_type == 'private':
         asset_mix = df_private
-        asset_mix.rename(
-            index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'},
-            inplace=True)
+
     elif asset_type == 'mortgage':
         asset_mix = df_mortgage
-        asset_mix.rename(index={'corporateBBB': 'CorporateBBB'}, inplace=True)
+
     else:
         asset_mix = df_public
-        asset_mix.rename(
-            index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'},
-            inplace=True)
+
 
     asset_mix.rename(columns={'Accum': 'ACCUM', 'group': 'GROUP', 'np': 'NONPAR', 'Payout': 'PAYOUT', 'Total': 'TOTAL', 'ul': 'UNIVERSAL', 'Surplus':'SURPLUS'}, inplace=True)
     cf = helpers.create_cf_tables(FTSE_Universe_data)
@@ -157,11 +153,10 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
 
     summed_cfs_dict = {}
 
-    # date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
-    # benchmarking_solution.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}) # renames but boilerplate code here
+    date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
 
     for portfolio in ['NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'SURPLUS', 'TOTAL']:
-        date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
+        # date_range = pd.date_range(given_date, periods=420, freq='M')  # 420 months for 35 years
         # Initialize DataFrames to hold summed cashflows and carry data for each portfolio
         summed_cfs = pd.DataFrame({'date': date_range})
         carry_table = pd.DataFrame(columns=['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB'],
@@ -170,12 +165,10 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
         """interesting: can probably replace with my code"""
         if asset_type == 'mortgage':
             portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index(
-                'rating').drop(columns='portfolio').rename(index={'corporateBBB': 'CorporateBBB'})
+                'rating').drop(columns='portfolio')
         else:
             portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index(
-                'rating').drop(columns='portfolio').rename(
-                index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA',
-                       'corporateBBB': 'CorporateBBB'})
+                'rating').drop(columns='portfolio')
 
         """end of lol"""
 
@@ -669,9 +662,10 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
 
     if asset_type == 'private':
         asset_mix = df_private
-        asset_mix.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}, inplace=True)
+        # asset_mix.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}, inplace=True)
 
         totals = totals.drop(['Corporate', 'Provincial', 'Federal'])
+
     elif asset_type == 'mortgage':
         asset_mix = df_mortgage
         asset_mix.rename(index={'corporateBBB': 'CorporateBBB'}, inplace=True)
@@ -730,7 +724,6 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
 
     return ftse_data
 
-import parse_args as parse_args
 
 def main_test():
 
@@ -754,95 +747,8 @@ def main_test():
 
 
 
-
-def main():
-
-    args, GivenDate = parse_args.get_user_info()
-
-    """new code, to use with decoupling (not sure if which prefer...for writing to excel it may depend, or as class can wrap as workflow external"""
-    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
-    KRDs = bench.reading_asset_KRDs(GivenDate)
-    """end of new code"""
-
-    do_all = False
-    if (args.mortgage==False) & (args.public==False) & (args.private==False):
-        do_all = True
-
-    if args.mortgage or do_all:
-        mort_solution = bench.optimization(KRDs, GivenDate, asset_type='mortgage', curMonthBS=args.curMonthBS)
-
-
-        summed_cashflows_mort = create_summed_cashflow_tables(mort_solution, GivenDate, asset_type='mortgage', curMonthBs=args.curMonthBS)
-        summary_mort = create_summary_table(GivenDate, asset_type='mortgage', curMonthBs=args.curMonthBS)
-        data_mort = create_indexData_table(mort_solution, GivenDate, asset_type='mortgage')
-
-    if args.public or do_all:
-        public_solution = bench.optimization(KRDs, GivenDate, asset_type='public', swap=args.swap, curMonthBS=args.curMonthBS)
-            # else:
-            #     public_solution = bench.optimization(GivenDate, asset_type='public')
-
-        summed_cashflows_public = create_summed_cashflow_tables(public_solution, GivenDate, asset_type='public', curMonthBs=args.curMonthBS)
-
-
-        summary_public = create_summary_table(GivenDate, asset_type='public', curMonthBs=args.curMonthBS)
-        data_public = create_indexData_table(public_solution, GivenDate, asset_type='public')
-
-    if args.private or do_all:
-        private_solution = bench.optimization(KRDs, GivenDate, asset_type='private', curMonthBS=args.curMonthBS)
-
-        summed_cashflows_private = create_summed_cashflow_tables(private_solution, GivenDate, asset_type='private', curMonthBs=args.curMonthBS)
-        summary_private = create_summary_table(GivenDate, asset_type='private', curMonthBs=args.curMonthBS)
-        data_private = create_indexData_table(private_solution, GivenDate, asset_type='private')
-
-
-
-
-    cur_date = GivenDate.strftime('%Y%m%d')
-
-    folder_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', 'Brenda', cur_date)
-
-    custom_benchmarks_path = folder_path + '/Custom_benchmark_' + cur_date + '.xlsx'
-    cfs_path = folder_path + '/CFs' + cur_date + '.xlsx'
-
-
-    if not os.path.exists(folder_path):
-        os.mkdir(folder_path)
-
-        # can probably put these functionalities together to run as 1 pipeline...
-
-    if not os.path.exists(custom_benchmarks_path):
-        with pd.ExcelWriter(custom_benchmarks_path) as writer:
-            if args.public or do_all:
-                summary_public.to_excel(writer, sheet_name='summary_public')
-                data_public.to_excel(writer, sheet_name='data_public', index=False)
-            if args.private or do_all:
-                summary_private.to_excel(writer, sheet_name='summary_private')
-                data_private.to_excel(writer, sheet_name='data_private', index=False)
-            
-            if args.mortgage or do_all:
-                summary_mort.to_excel(writer, sheet_name='summary_mort')
-                data_mort.to_excel(writer, sheet_name='data_mort', index=False)
-    else:
-        print('custom benchmarks file for this date already exists - cant make a file with the same name')
-
-
-    if not os.path.exists(cfs_path):
-        with pd.ExcelWriter(cfs_path) as writer:
-            for df in ['NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'TOTAL', 'SURPLUS']:
-
-                if args.public or do_all:
-                    summed_cashflows_public[df].to_excel(writer, sheet_name=('summed cfs public - ' + df), startrow=1)
-                if args.private or do_all:
-                    summed_cashflows_private[df].to_excel(writer, sheet_name=('summed cfs private - ' + df), startrow=1)
-
-                if args.mortgage or do_all:
-                    summed_cashflows_mort[df].to_excel(writer, sheet_name=('summed cfs mort - ' + df), startrow=1)
-    else:
-        print('cashflows file for this date already exists - cant make a file with the same name')
-
 if __name__ == "__main__":
-    main()
-
+    main_test()
     # testing
     #import doctest
     #doctest.testmod()

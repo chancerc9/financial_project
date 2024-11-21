@@ -168,15 +168,19 @@ Mutates: Nothing
 Helper that reading_asset_KRDs(ftse_data, GivenDate) relies on.
 """
 # Reads in asset segments for liabilities:
+# Should be called: create asset_mix
 def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
                       sheet_version: int = 1) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Reads and calculates the asset mix for liabilities based on the given date.
+    Reads and creates an asset table of all segments for chosen quarter.
+
+    Select default as 1 except for optimization process final partition, using 0 (real-values = FALSE, where
+    weighting was changed to 1s).
 
     Parameters:
     Given_date (pd.Timestamp): The date for which the asset mix is being calculated.
     curMonthBS (bool, optional): Whether to use the current month's balance sheet. Defaults to False.
-    sheet_version (int, optional): Sheet version to use; 1 for segments, 0 for totals. Defaults to 1.
+    sheet_version (int, optional): Sheet version to use; 1 for segments, 0 for totals (optimization). Defaults to 1.
 
     Returns:
     Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: Returns three DataFrames:
@@ -187,11 +191,12 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     # 1 for segments, 0 for totals
     totals = helpers.BSTotals(Given_date, sheet_version)
 
-    weights = helpers.percents(
+    weights = helpers.percents( # gets weighting for each asset mix
         Given_date)  # weights for total is same as weights for everything else, maybe that's where the problem shows - see weights in hardcoded.xlsx (OR)
     weights = weights[['ACCUM', 'PAYOUT', 'UNIVERSAL', 'NONPAR', 'GROUP', 'PARCSM', 'Total', 'Surplus', 'SEGFUNDS']]
     weights = weights.dropna(axis=1, how='all')  # Remove columns with all NaNs (* inefficient *)
 
+    # Multiply the balance by asset percents of segments to get asset mix
     df = weights.multiply(pd.Series(totals))
     df.index.name = None
 
@@ -205,21 +210,27 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     df.rename(columns={'ACCUM': 'Accum', 'PAYOUT': 'Payout', 'GROUP': 'group', 'UNIVERSAL': 'ul', 'NONPAR': 'np'},
               inplace=True)
 
-    # Split into public, private, and mortgage tables
+
+    # Split into public, private, and mortgage tables (defining them)
     df_public = df.iloc[:5]
-    df_private = df.iloc[5:11].drop(columns=['SEGFUNDS'])
 
-    df_private.rename({'PrivateAA': 'corporateAAA_AA', 'PrivateA': 'corporateA', 'PrivateBBB': 'corporateBBB',
+    # Defining private, public, and mortgage tables individually by ALM Team defined definition:
+
+    # Publics are from public bonds
+    df_public.rename({'CorpAAA_AA': 'CorporateAAA_AA', 'CorpA': 'CorporateA', 'CorpBBB': 'CorporateBBB'},
+                     inplace=True)
+
+    df_private = df.iloc[5:11].drop(columns=['SEGFUNDS']) # mortgages are modelled from privates
+    #  privates are modelled with CorpA and CorpAAA bonds  (considering our private assets are not existing in FTSE universe)
+    df_private.rename({'PrivateAA': 'CorporateAAA_AA', 'PrivateA': 'CorporateA', 'PrivateBBB': 'CorporateBBB',
                        'MortgagesInsured': 'Federal'}, inplace=True)
-    df_public.rename({'CorpAAA_AA': 'corporateAAA_AA', 'CorpA': 'corporateA', 'CorpBBB': 'corporateBBB'},
-                     inplace=True)  # Rename it better here
 
-    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'corporateBBB'},
+    # Define mortgages from private_df rows
+    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'CorporateBBB'},
                                                                        inplace=False)  # orig: inplace=True; use inplace=FALSE for debugging purposes.
-    df_private.drop(['PrivateBB_B', 'MortgagesConv', 'Federal'], inplace=True)
 
-    # TODO: added back from old code:
-    # df_private.loc['Provincial'] = 0
+    # Final dropping of rows to define df_private:
+    df_private.drop(['PrivateBB_B', 'MortgagesConv', 'Federal'], inplace=True)
 
     return df_public, df_private, df_mortgages
 
@@ -547,3 +558,18 @@ def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public', curMon
     return sol_df
 
 
+def debug():
+    import cli
+
+    # Retrieve user input
+    args, GivenDate = cli.get_user_info()
+
+    # Str form of GivenDate
+    cur_date: str = GivenDate.strftime('%Y%m%d')
+    df_public, df_private, df_mortgages = reading_asset_mix(GivenDate)
+    print(df_mortgages.head())
+
+
+
+if __name__ == "__main__":
+    debug()

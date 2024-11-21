@@ -8,20 +8,49 @@ Functions:
 Side effects:
 
 """
+from flask.logging import has_level_handler
 
 """
     This provided code is a complex script that processes bond-related data, 
-    calculates key rate durations (KRDs), and uploads the resulting sensitivities 
-    to a database. 
-    
-    
-    Original description (a portion of):
-        There are many ways this script can be used.
+    calculates key rate durations (KRDs), brings in sensitivities for liabilities and optimizes them with assets, and
+    calculates cashflows from solution.
 
-        It is "safe" to be ran as many times as warranted.
+    It is "safe" to be ran as many times as warranted.
 
-        When ran as main, without any arguments:
-            It will do the analysis for today (using 6PM cut-off logic.)
+"""
+
+"""
+Definitions
+
+ASSET CLASS: mortgage, public, private (split the items into ratings or UL, PAR, SURPLUS, etc)
+
+--- separate ---
+
+SEGMENTS: UL, PAR, SURPLUS
+- a.k.a. 'portfolio'
+These are broader categories for assets, each of which has a different allocated asset mix.
+
+RATINGS:
+- a.k.a. asset types, asset mix
+
+To determine the asset types per segment, multiply the segment balance by the asset mix percentage that is unique to each
+segment. This percentage matrix is called the "Asset Mix.xlsx" file, where the segment balances and total asset balance is 
+called the "SBS Totals.xlsx" file. # This holds the liabilities, asset, and totals balance for all segments.
+
+A: Assets
+1. Calculate cashflows from FTSE universe.
+2. Calculate KRDs from cashflows from FTSE universe.
+
+B:
+1. Bring in liability sensitivities through balance sheet and asset percentage matrix. The liabilities for our holdings. (FALSE)
+1. Bring in liability sensitivities through "Targets by Asset Class.xlsx" as the targets to hedge asset krds and liabilities to.
+
+OPTIMIZATION:
+The calculated KRDs (simple) and brought-in KRDs from "Targets by Asset Class.xlsx" (to match) are matched during this 
+process.
+
+We essentially match the asset KRDs to liability KRDs for liabilities hedging, and perform an optimization function to 
+maximize returns for Totals.
 """
 # Standard library imports
 import argparse
@@ -73,45 +102,77 @@ General_cur = General_conn.con.cursor()
 import encapsulated_objects as datahandler
 import file_utils
 
+# Logging directories:
+MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
+os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
+LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
+               'a')  # Append to the existing logfile, or create a new one
+
+
+# Generalized function for optimization
+def process_asset_type(asset_type, KRDs, GivenDate):
+    misc.log(f"Optimizing {asset_type}", LOGFILE)
+    solution = model_portfolio.optimization(KRDs, GivenDate, asset_type=asset_type)
+    print(f"Successfully optimized: {asset_type}")
+    return solution
+
+
+# Generalized function for writing solutions.xlsx to Excel
+def write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate):
+    if not os.path.exists(solutions_path):
+        with pd.ExcelWriter(solutions_path) as writer:
+            # Write solutions dynamically based on available data
+            for asset_type, solution in solutions.items():
+                solution.to_excel(writer, sheet_name=f"{asset_type}_solution")
+            # Write shared data
+            KRDs.to_excel(writer, sheet_name="asset KRDs")
+            mixes = model_portfolio.reading_asset_mix(GivenDate)
+            mixes[0].to_excel(writer, sheet_name="public asset mix")
+            mixes[1].to_excel(writer, sheet_name="private asset mix")
+            mixes[2].to_excel(writer, sheet_name="mort asset mix")
+        print("Successfully output solutions.xlsx file")
+    else:
+        print("solutions.xlsx file already exists - can't make a file with the same name")
+
+
 def main():  # model_portfolio.py new version
     """
     Main function to orchestrate the portfolio optimization process.
     It gathers user input, runs the appropriate optimizations, and saves the results.
     """
 
-    # Logging directories:
-    MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-    os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
-    LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
-                   'a')  # Append to the existing logfile, or create a new one
+    # Retrieve user input
+    args, GivenDate = cli.get_user_info()
+
+    # Str form of GivenDate
+    cur_date: str = GivenDate.strftime('%Y%m%d')
+
+    # Define Results (output) Directory:
+    OUTPUT_DIR_PATH: str = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
+                                        'benchmarking_outputs',
+                                        'Brenda', cur_date)  # Test path - Brenda
+    os.makedirs(OUTPUT_DIR_PATH, exist_ok=True)
+
+    CURR_DEBUGGING_PATH = os.path.join(OUTPUT_DIR_PATH, 'Debugging_Steps')
+    # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
+    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
+
+    # Creates folders for output items:
+    solutions_path = OUTPUT_DIR_PATH + '/solutions' + cur_date + '.xlsx'  # folder_path used to be var path - old (Normal)
+
+    custom_benchmarks_path = OUTPUT_DIR_PATH + '/Custom_benchmark_' + cur_date + '.xlsx'
+
+    cfs_path = OUTPUT_DIR_PATH + '/CFs' + cur_date + '.xlsx'
 
     # Main code:
     try:
-        # Retrieve user input
-        args, GivenDate = cli.get_user_info()
-
         misc.log(f'Starting run of: {GivenDate}', LOGFILE)
 
-        # Determine if all outputs need to be optimized
-        do_all = not (args.mortgage or args.public or args.private)
-
-        # Str form of GivenDate
-        cur_date: str = GivenDate.strftime('%Y%m%d')
-
-        # Define Results (output) Directory:
-        OUTPUT_DIR_PATH: str = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                            'benchmarking_outputs',
-                                            'Brenda', cur_date)  # Test path - Brenda
-        os.makedirs(OUTPUT_DIR_PATH, exist_ok=True)
-        """Original filepath:
-        path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs', cur_date) - old (normal)
-        """
+        # Begin process:
 
         bond_curves = datahandler.get_bond_curves(
                 GivenDate)  # Retrieve annual bond curve data (annual curve data for 35 years)
 
-
-        # Begin process:
 
         # 1. Define FTSE Universe:
 
@@ -122,163 +183,127 @@ def main():  # model_portfolio.py new version
         ftse_data = ftse_handler.data
 
         # Display the data to see its structure and contents - can write to excel file here.
-        print(ftse_data.head())  # Prints the first few rows of the DataFrame
-
+        # print(ftse_data.head())  # Prints the first few rows of the DataFrame
 
         # 2. Get cashflows
 
         # 3. Get KRDs from cashflows - Gets info using copy of ftse data
         KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data, GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
 
-        print(f"KRDs.head() initially {KRDs.head()}")
-        print(f"KRDs.tail() initially {KRDs.tail()}")
+        # TODO! Tests:
+        # print(f"KRDs.head() initially {KRDs.head()}")
+        # print(f"KRDs.tail() initially {KRDs.tail()}")
 
         # Test code to keep; verified: KRDs does not change, which is good and means useable
-        import copy
-        copied = copy.deepcopy(KRDs)
+        # import copy
+        # copied = copy.deepcopy(KRDs)
 
         # fast initially tho may take a bit or few of mem
 
         # ftse_data = helpers.get_ftse_data(GivenDate)            # Gets ftse bond info from our database
 
-        CURR_DEBUGGING_PATH = os.path.join(OUTPUT_DIR_PATH, 'Debugging_Steps')
-        # CURR_FILE_PATH = os.path.join(CURR_DEBUGGING_PATH, 'ftse_bond_curves.xlsx')
-        os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
 
         # Output items:
         file_utils.write_results_to_excel_one_sheet(ftse_data,CURR_DEBUGGING_PATH,cur_date,'ftse_data') # for ftse data
 
+        # Define the mask for conditionals
+        mask = {
+            "mortgage": args.mortgage,
+            "public": args.public,
+            "private": args.private,
+        }
 
-        # Optimization function uses .copy()
+        # Determine if all outputs need to be optimized
+        if not (args.mortgage or args.public or args.private):
+            mask = {key: True for key in mask}
 
-        # Optimize for mortgages, publics, and privates based on user input
-        if args.mortgage or do_all:
-            misc.log('Optimizing mortgages', LOGFILE)
+        """
+        mask2 = {
+            "custom_benchmarks": args.benchmarks,
+            "cfs": args.cfs,
+    
+        }
+        
+        if not (args.benchmarks,args.cfs):
+            mask2 = {key: True for key in mask2}
+        """
 
-            # Model portfolio:
-            mort_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='mortgage') # make ftse data a parent class that is inherited by any data manipulating function classes below - any without using it can be a method(s)
+        # Main logic
+        print("Optimizing solutions")
 
-            # Benchmarking code:
-            # mort_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='mortgage', curMonthBS=args.curMonthBS)
+        # Dictionary to hold results dynamically
+        solutions = {}
 
-        if args.public or do_all:
-            misc.log('Optimizing publics', LOGFILE)
+        summary = {}
+        data = {}
 
-            # Model portfolio:
-            public_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='public')
+        summed_cashflows = {}
 
-            # Benchmarking code: , curMonthBS=args.curMonthBS)
-
-        if args.private or do_all:
-            misc.log('Optimizing privates', LOGFILE)
-
-            # Model portfolio:
-            private_solution = model_portfolio.optimization(KRDs, GivenDate, asset_type='private') # supposed to optimize the privates last ?
-
-            # Benchmarking code: , curMonthBS=args.curMonthBS)
-
-        print(f"KRDs.head() after running other functions: {KRDs.head()}")
-        print(f"KRDs.tail() after running other functions: {KRDs.tail()}")
-
-        if copied.equals(KRDs):
-            print("No changes were made to KRDs data")
-        else:
-            print("The data has been modified")
-
-        # Creates solutions folder:
-        solutions_path = OUTPUT_DIR_PATH + '/solutions' + cur_date + '.xlsx' # folder_path used to be var path - old (Normal)
-
-        if not os.path.exists(solutions_path):
-            with pd.ExcelWriter(solutions_path) as writer:
-                if args.public or do_all:
-                    public_solution.to_excel(writer, sheet_name='public_solution')
-                if args.private or do_all:
-                    private_solution.to_excel(writer, sheet_name='private_solution')
-                if args.mortgage or do_all:
-                    mort_solution.to_excel(writer, sheet_name='mortgage_solution')
-                # model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data, GivenDate).to_excel(writer, sheet_name='asset KRDs')
-                KRDs.to_excel(writer, sheet_name='asset KRDs') # see if works lol
-                model_portfolio.reading_asset_mix(GivenDate)[0].to_excel(writer, sheet_name='public asset mix')
-                model_portfolio.reading_asset_mix(GivenDate)[1].to_excel(writer, sheet_name='private asset mix')
-                model_portfolio.reading_asset_mix(GivenDate)[2].to_excel(writer, sheet_name='mort asset mix')
-
-        else:
-            print("solutions file already exists - can't make a file with the same name'")
-
-
+        # Process only the specified conditions
+        for asset_type, condition in mask.items():
+            if condition:
+                solutions[asset_type] = process_asset_type(asset_type, KRDs, GivenDate)
+                """
+                misc.log(f"Optimizing {asset_type}", LOGFILE)
+                solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)
+                print(f"Successfully optimized: {asset_type}")
+                """
+        # Write solutions to Excel
+        write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate)
         print("Successfully ran: solutions")
 
 
-        ftse_data = ftse_handler.data
+        print("Creating Custom_benchmark.xlsx")
 
-        # Run and output benchmarks:
-        if args.mortgage or do_all:
-
-            summary_mort = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='mortgage', curMonthBs=args.curMonthBS)
-            data_mort = cashflows_and_benchmark_tables.create_indexData_table(mort_solution, GivenDate, ftse_handler.data, asset_type='mortgage')
-
-            # Data is protected here:
-            summed_cashflows_mort = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_mort, mort_solution, GivenDate, asset_type='mortgage',
-                                                                  curMonthBs=args.curMonthBS)
-
-
-        if args.public or do_all:
-
-            summary_public = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='public', curMonthBs=args.curMonthBS)
-            data_public = cashflows_and_benchmark_tables.create_indexData_table(public_solution, GivenDate, ftse_handler.data, asset_type='public')
-
-            # Data is protected here:
-            summed_cashflows_public = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_public, public_solution, GivenDate, asset_type='public',
-                                                                    curMonthBs=args.curMonthBS)
-        if args.private or do_all:
-
-            summary_private = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type='private', curMonthBs=args.curMonthBS)
-            data_private = cashflows_and_benchmark_tables.create_indexData_table(private_solution, GivenDate, ftse_handler.data, asset_type='private')
-
-            # Data is protected here:
-            summed_cashflows_private = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, data_private, private_solution, GivenDate, asset_type='private',
-                                                                     curMonthBs=args.curMonthBS)
-
-        custom_benchmarks_path = OUTPUT_DIR_PATH + '/Custom_benchmark_' + cur_date + '.xlsx'
-        cfs_path = OUTPUT_DIR_PATH + '/CFs' + cur_date + '.xlsx'
-
-        # Can probably check if_exist before running / creating Custom_benchmarks tables to just output some:
-        # Solutions will ALWAYS run since needed for even 1 table
-        # cashflows should always run IMO since part of both debugging and mandatory
-
-        import psutil
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        print(f"Mem usage: {memory_info.rss} bytes")
-
+        for asset_type, condition in mask.items():
+            if condition:
+                summary[asset_type] = cashflows_and_benchmark_tables.create_summary_table(GivenDate, asset_type,
+                                                                               curMonthBs=args.curMonthBS)
+                data[asset_type] = cashflows_and_benchmark_tables.create_indexData_table(solutions[asset_type], GivenDate,
+                                                                                  ftse_handler.data,
+                                                                                  asset_type)
+        # Map asset types to their respective data
+        dict_data = {
+            "public": {"summary": summary.get("public"), "data": data.get("public")},
+            "private": {"summary": summary.get("private"), "data": data.get("private")},
+            "mortgage": {"summary": summary.get("mortgage"), "data": data.get("mortgage")},
+        }
+        # Write summaries and data to Excel
         if not os.path.exists(custom_benchmarks_path):
             with pd.ExcelWriter(custom_benchmarks_path) as writer:
-                if args.public or do_all:
-                    summary_public.to_excel(writer, sheet_name='summary_public')
-                    data_public.to_excel(writer, sheet_name='data_public', index=False)
-                if args.private or do_all:
-                    summary_private.to_excel(writer, sheet_name='summary_private')
-                    data_private.to_excel(writer, sheet_name='data_private', index=False)
-
-                if args.mortgage or do_all:
-                    summary_mort.to_excel(writer, sheet_name='summary_mort')
-                    data_mort.to_excel(writer, sheet_name='data_mort', index=False)
+                for asset_type, content in dict_data.items():
+                    if mask[asset_type]:
+                        # Write summary and data for the asset type
+                        content["summary"].to_excel(writer, sheet_name=f"summary_{asset_type}")
+                        content["data"].to_excel(writer, sheet_name=f"data_{asset_type}", index=False)
+            print("Successfully created custom benchmarks file.")
         else:
-            print('custom benchmarks file for this date already exists - cant make a file with the same name')
+            print("Custom benchmarks file for this date already exists - can't make a file with the same name.")
+
+
+        print("Successfully ran: custom benchmarks")
+
+
+        print("Creating cashflows from solutions: CFs.xlsx")
+
+        for asset_type, condition in mask.items():
+            if condition:
+                summed_cashflows[asset_type] = cashflows_and_benchmark_tables.create_summed_cashflow_tables(bond_curves, ftse_data, # Data is protected here:
+                                                                                                 data[asset_type],
+                                                                                                 solutions[asset_type],
+                                                                                                 GivenDate,
+                                                                                                 asset_type,
+                                                                                                 curMonthBs=args.curMonthBS)
+
+        SEGMENTS = ('NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'TOTAL', 'SURPLUS')
 
         if not os.path.exists(cfs_path):
             with pd.ExcelWriter(cfs_path) as writer:
-                for df in ['NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'TOTAL', 'SURPLUS']:
+                for segment in SEGMENTS:
+                    for asset_type, content in summed_cashflows.items():
+                        content[segment].to_excel(writer, sheet_name=(f"summed cfs {asset_type} - {segment}"), startrow=1)
+            print("Successfully output CFs.xlsx file")
 
-                    if args.public or do_all:
-                        summed_cashflows_public[df].to_excel(writer, sheet_name=('summed cfs public - ' + df),
-                                                             startrow=1)
-                    if args.private or do_all:
-                        summed_cashflows_private[df].to_excel(writer, sheet_name=('summed cfs private - ' + df),
-                                                              startrow=1)
-
-                    if args.mortgage or do_all:
-                        summed_cashflows_mort[df].to_excel(writer, sheet_name=('summed cfs mort - ' + df), startrow=1)
         else:
             print('cashflows file for this date already exists - cant make a file with the same name')
 
@@ -287,8 +312,18 @@ def main():  # model_portfolio.py new version
         print('Success.')
 
 
+
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        print(f"Mem usage: {memory_info.rss} bytes")
+
+
     except:
         misc.log("Failed " + misc.errtxt(), LOGFILE)
+        # sendemail.error('Model Portfolio Generation Failed', misc.errtxt())
+        # # jobs.jobStatusUpdate(args.jobname, 'ERROR') - dont use
+
 
 
 
@@ -310,4 +345,34 @@ if __name__ == "__main__":
 """
 
 
+                # print("Successfully optimized: matched asset-liability sensitivities and optimized returns")
+
+
+        # Rewrite the conditionals for more logical coherence and sense in isolating conditionals, like sets - can have boilerplate code
+
+        # Optimization function uses .copy()
+        # supposed to optimize the privates last ?
+
+            #print(f"KRDs.head() after running other functions: {KRDs.head()}")
+            #print(f"KRDs.tail() after running other functions: {KRDs.tail()}")
+
+            # boilerplate code:
+
+
+"""
+if copied.equals(KRDs):
+    print("No changes were made to KRDs data")
+else:
+    print("The data has been modified")
+"""
+
+
+            # actually, have do_all be an else case lol
+
+
+
+
+        # Can probably check if_exist before running / creating Custom_benchmarks tables to just output some:
+        # Solutions will ALWAYS run since needed for even 1 table
+        # cashflows should always run IMO since part of both debugging and mandatory
 
