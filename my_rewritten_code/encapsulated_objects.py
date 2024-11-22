@@ -81,8 +81,7 @@ class FTSEDataHandler:
         ----------
         given_date : datetime
             The date for which FTSE bond data will be retrieved and processed.
-        N
-        otes:
+        Notes:
         ------
         The initial data load occurs upon instantiation by calling `_load_data`.
         """
@@ -144,7 +143,8 @@ class FTSEDataHandler:
         # a) Calculate the market weight excluding real estate (REITs):
         total_marketweight = df['marketweight'].sum()
         real_estate_weight = df[df['industrygroup'] == "Real Estate"]['marketweight'].sum()
-        df['marketweight_noREITs'] = df.apply(                  # Variable name == ['market_weight_noREITs']
+            # Variable name == ['market_weight_noREITs']
+        df['marketweight_noREITs'] = df.apply(
             lambda row: 0 if row['industrygroup'] == "Real Estate"
             else row['marketweight'] / (total_marketweight - real_estate_weight) * 100,
             axis=1)
@@ -153,7 +153,8 @@ class FTSEDataHandler:
         df['Sector'] = df.apply(
             lambda row: row['industrygroup'] if row['industrysector'] == 'Government' else row['industrysector'],
             axis=1)
-        df.drop(df[df['Sector'] == 'Municipal'].index, inplace=True)  # Drop municipal bonds
+            # Drop municipal bonds
+        df.drop(df[df['Sector'] == 'Municipal'].index, inplace=True)
         df['SectorM'] = df['Sector']
         df['Rating_c'] = df.apply(lambda row: "AAA_AA" if row['rating'] in ['AA', 'AAA'] else row['rating'], axis=1)
         df['RatingBucket'] = df.apply(
@@ -173,7 +174,7 @@ class FTSEDataHandler:
             (df['TermPt'] < 15.75),
             (df['TermPt'] < 20.75),
             (df['TermPt'] < 27.75),
-            (df['TermPt'] < 35.25)      # Datahandler?
+            (df['TermPt'] < 35.25)
         ]
         choices = [1, 2, 3, 4, 5, 6]  # TODO! Remove comment: # only non-mutating functions methods are for bond terms and curves, not even for ftse data as it manipulates it (!!)
         # For TermPt >= 35.25, bucket = 0
@@ -208,17 +209,11 @@ class FTSEDataHandler:
 
 
 
-
-
-
-
-
-
-"""Queries, not encapsulated:
-"""
+"""Queries, not encapsulated:"""
 # ---- Non encapsulated objects -----
+# Queries or things that effectively cause no mutation on external or parameter objects: includes get_bond_curves,
+# create_general_shock_tables() can be placed in one file
 
-# Queries or things that effectively cause no mutation on external or parameter objects: includes get_bond_curves, create_general_shock_tables() can be placed in one file
 def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     """
     Retrieves and processes bond curves from the database for a given date. Bond curves remain annual curves as current.
@@ -258,12 +253,19 @@ def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     df = df.shift()[1:]
     df = df / 100
 
-    return df  # Returns df: a Dataframe of bond curves for all years, per annum (IIRC)
+    # Returns df: a Dataframe of bond curves for all years, per annum - IIRC
+    return df
+
+
+
+# ----- read in data -----
 
 
 
 
 
+
+# ---- Can delete ----
 
 """
 Old functions.

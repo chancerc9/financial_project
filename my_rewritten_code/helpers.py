@@ -37,7 +37,7 @@ from equitable.infrastructure import jobs, sendemail, sysenv
 
 # Required custom modules
 import file_utils
-import model_portfolio_process as mp
+import solutions as mp
 
 # Pandas configuration
 pd.set_option('display.width', 150)
@@ -165,7 +165,7 @@ def create_general_shock_table() -> pd.DataFrame:
 
     buckets = [0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 100]  # Shock interval years.
 
-    terms = np.linspace(start=0.5, stop=35, num=70)  # buckets for bond terms.
+    terms = np.linspace(start=0.5, stop=35, num=70)  # Buckets for bond terms.
 
     # Create a DataFrame for shocks with 70 term intervals
     shocks = pd.DataFrame(index=terms, columns=buckets, dtype=float)

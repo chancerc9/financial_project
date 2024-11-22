@@ -38,5 +38,6 @@ from equitable.db.psyw import SmartDB
 from equitable.infrastructure import sysenv, jobs, sendemail
 from equitable.utils import processtools as misc
 
+# Logging directories
 
 
