@@ -200,12 +200,6 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     df = weights.multiply(pd.Series(totals))
     df.index.name = None
 
-    # Adjust Corporate bonds and rename columns for clarity
-    # TODO! use this for rerunning q2
-    # df.loc['CorpA'] = df.loc['CorpA'] + df.loc['CorpBBB'] / 2
-    # df.loc['CorpBBB'] = df.loc['CorpBBB'] / 2
-
-    ##
 
     df.rename(columns={'ACCUM': 'Accum', 'PAYOUT': 'Payout', 'GROUP': 'group', 'UNIVERSAL': 'ul', 'NONPAR': 'np'},
               inplace=True)
@@ -250,11 +244,14 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
 
     ''' Setting Asset_mix to the correct table based on the given asset class '''
     if asset_type == 'private':
-        Asset_mix = df_private
+        Asset_mix = df_private.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
+
     elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages
+        Asset_mix = df_mortgages.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
+
     else:
-        Asset_mix = df_public  # For all
+        Asset_mix = df_public.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})  # Rename it better here
+  # For all
 
     # Reads in targets sensitivities to match sols:
     ''' Separating the db values into 3 tables, one for each asset class '''
@@ -278,6 +275,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
     we sum the public sensitivities for all 5 portfolios, then subtract the sum of privates for all portfolios, including ParCSM and Surplus'''
     if asset_type == 'public':
         net_sensitivity = helpers.public_sensitivities(given_date)
+
     elif asset_type == 'private':
         net_sensitivity = helpers.private_sensitivities(given_date)
     elif asset_type == 'mortgage':

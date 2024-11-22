@@ -107,6 +107,8 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
                                                                                      'Surplus': 'SURPLUS'})
 
                                                                                      # Load necessary FTSE data, weights, and asset mix information
+    benchmarking_solution['rating'] = benchmarking_solution['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
+
     # ftse_data = helpers.get_ftse_data(given_date)
     weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
     # ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type) # This index table is perfect to use actually - create_index_table comes before create summed cashflows
@@ -668,12 +670,12 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
 
     elif asset_type == 'mortgage':
         asset_mix = df_mortgage
-        asset_mix.rename(index={'corporateBBB': 'CorporateBBB'}, inplace=True)
+        #asset_mix.rename(index={'corporateBBB': 'CorporateBBB'}, inplace=True)
 
         totals = totals.drop(['Corporate', 'Provincial', 'CorporateAAA_AA', 'CorporateA'])
     else:
         asset_mix = df_public
-        asset_mix.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}, inplace=True)
+        #asset_mix.rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}, inplace=True)
 
         totals = totals.drop(['Corporate'])
 

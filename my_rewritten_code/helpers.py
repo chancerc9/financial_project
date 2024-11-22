@@ -69,32 +69,33 @@ General_cur = General_conn.con.cursor()
 # 1. Get bond curves and process (add half-year intervals, choose) - replaces get_bond_curves() and - functionality
 
 # Queries or things that effectively cause no mutation on external or parameter objects: includes get_bond_curves, create_general_shock_tables() can be placed in one file
-
+# class CreateWeightTables for weighing KRDs 70 to KRDs 6 (they use different weighting method(s) than the original cfs
 def create_bucketing_table() -> pd.DataFrame:
     """
-    Creates a bucketing table with term intervals.
-
+    Creates a bucketing table with term intervals for 70 buckets.
+        - Used in create_weight_tables(ftse_data)
     Returns:
-    pd.DataFrame: A DataFrame with term buckets and their respective lower and upper bounds.
+        pd.DataFrame: A DataFrame with term buckets and their respective lower and upper bounds.
     """
     # Create a DataFrame with term buckets ranging from 0.5 to 35 years (70 intervals)
     d = {'Term': list(np.linspace(start=0.5, stop=35, num=70))}
     df = pd.DataFrame(data=d)
 
     # Calculate the lower and upper bounds for each bucket
-    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(1)) / 2  # TODO!  LMAO this is equal to calculating the +25, -25 lower_bound and upper_bound that other functions implement - and may be faster but the others could be considered more intuitive - ask google search or MS Copilot for this terminology or to double check
+    df['Lower_Bound'] = (df['Term'] + df['Term'].shift(
+        1)) / 2  # This is equal to calculating the +25, -25 lower_bound and upper_bound, some of which other functions implement.
     df['Upper_Bound'] = df['Lower_Bound'].shift(-1)
-    
+
     # Adjust the first and last bounds
     df.iloc[0, 1] = 0
-    df.iloc[-1, 2] = 100 # TODO! should the last bound be 100? EDIT: YES! Can revert to prior git version
+    df.iloc[-1, 2] = 100  # The last bound is 100 to include weights of whole universe (cashflows generated from bonds <= 35 years, however overall weights for KRDs and solution CFs should equate to 100 => hence, bounds of 100 here).
 
     return df
 
 
-def create_weight_tables(ftse_data: pd.DataFrame):
+def create_weight_tables(ftse_data: pd.DataFrame) -> tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
     """
-    Creates weight tables for each bond rating based on subindex percentages.
+    Creates weight tables for each bond rating based on FTSE Universe (subindex) percentages.
 
     Usage:
     Used by create_KRD_tables to aggregate bonds into 6 buckets.
@@ -114,12 +115,13 @@ def create_weight_tables(ftse_data: pd.DataFrame):
         columns=list(range(1, 7)))
 
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"  # Revised to be more concise and clear - Brenda
-        
+        column_to_look_in = "RatingBucket" if rating != 'Corporate' else "Sector"
+
         # Create bucketing table
-        df = create_bucketing_table()  # This is for the 70 buckets; weights is for the 6 buckets (from 70 buckets)
-        
-         # Sum market weights within each bucket
+        df = create_bucketing_table()
+        # This is for the 70 buckets; weights is for the 6 buckets (from 70 buckets).
+
+        # Sum market weights within each bucket
         for x in range(6):
             lower_b = buckets[x]
             upper_b = buckets[x + 1]
@@ -128,84 +130,76 @@ def create_weight_tables(ftse_data: pd.DataFrame):
             # Calculate total market weight for the given rating and term bucket
             df[column_name] = df.apply(lambda row: ftse_data.loc[
                 (ftse_data[column_to_look_in] == rating) &
-                (ftse_data['TermPt'] < upper_b) & # if between lower and upper bounds && between the Lower and Upper bouds by create bucketing table - curious if somehow the cashflows were not affected, because the changes were small and only builds in KRDs?
-                (ftse_data['TermPt'] >= lower_b) & # should make upper_b for ftse data as = else isn't as accurate imo
+                (ftse_data['TermPt'] < upper_b) &  # if between lower and upper bounds && between the Lower and Upper bounds by create bucketing table
+                (ftse_data['TermPt'] >= lower_b) &
                 (ftse_data['TermPt'] < row['Upper_Bound']) &
                 (ftse_data['TermPt'] > row['Lower_Bound'] - 0.0001)
-            ]['marketweight_noREITs'].sum(), axis=1)
+                ]['marketweight_noREITs'].sum(), axis=1)
 
             total_universe_weights.loc[rating, x + 1] = df[column_name].sum()
-            
-            # Dividing by the sum of the column to get the weight as a percentage of the subindex; ie,
+
             # Normalize by the sum of market weights
             df[column_name] = df[column_name] / df[column_name].sum()
 
         weight_dict[rating] = df
-        # weight_dict[rating] = df.fillna(0) # TODO: I added this fillNaN
+        # weight_dict[rating] = df.fillna(0) # TODO: consider if fillNaN affects.
 
     return weight_dict, total_universe_weights
 
 
+# class CreateShocks:
 def create_general_shock_table() -> pd.DataFrame:
     """
-    Creates a general shock table to calculate shocks for each security type.
+    Creates a reusable shock table to calculate shocks for each security type.
+
+    Creates n by m matrix, where
+        n = 70 buckets (for semi-annual bond yields across 35 years)
+        m = 11 columns of shock intervals
+
+    Each row sums up to 1 basis point.
 
     Returns:
     pd.DataFrame: A DataFrame containing the shock values for different term buckets.
     """
-    shock_size = 0.0001
-    buckets = [0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 100]
-    
+    shock_size = 0.0001  # We define 1 basis point here as 0.0001.
+
+    buckets = [0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 100]  # Shock interval years.
+
+    terms = np.linspace(start=0.5, stop=35, num=70)  # buckets for bond terms.
+
     # Create a DataFrame for shocks with 70 term intervals
-    df = pd.DataFrame(columns=buckets, index=list(np.linspace(start=0.5, stop=35, num=70)))
-    df[0] = df.index  # Initialize the first column with term points
-    
-    # Apply shock formula for each bucket
+    shocks = pd.DataFrame(index=terms, columns=buckets, dtype=float)
+    shocks[0] = terms  # Initialize the first column with term points
+
+    # Calculate shocks for each bucket
     for i in range(1, 11):
-        df[buckets[i]] = df.apply(lambda row: (
-            (1 - (row[0] - buckets[i]) / (buckets[i + 1] - buckets[i])) * shock_size) 
-            if (buckets[i] <= row[0] <= buckets[i + 1]) 
-            else (((row[0] - buckets[i - 1]) / (buckets[i] - buckets[i - 1]) * shock_size) 
-                  if buckets[i - 1] <= row[0] <= buckets[i] else 0), axis=1)
+        # Define masks for terms within the left and right ranges
+        left_mask = (buckets[i - 1] <= terms) & (terms <= buckets[i])
+        right_mask = (buckets[i] < terms) & (terms <= buckets[i + 1])  # Notice the strict inequality here
+        # Calculate left and right shocks
+        left_shock = (terms - buckets[i - 1]) / (buckets[i] - buckets[i - 1]) * shock_size
+        right_shock = (1 - (terms - buckets[i]) / (buckets[i + 1] - buckets[i])) * shock_size
+        # Assign shocks, ensuring no overlap
+        shocks[buckets[i]] = np.where(left_mask, left_shock, 0)
+        shocks[buckets[i]] = np.where(right_mask, right_shock, shocks[buckets[i]])
 
-    # TODO: temp code to overwrite shock tables
-    # Assuming df and buckets are already defined
+    # Manual overwrite as per original function change to ensure the sum of 1 basis point in early and end bucket terms.
+    shocks.iloc[0, 1] = shock_size
+    shocks.iloc[60:70, 10] = shock_size
 
-    for i in range(0, 1):
-        df[buckets[1]].iloc[i] = shock_size
+    # Drop the last column (bucket 100)
+    shocks = shocks.drop(columns=100)
 
-    for i in range(60, 70): # df[buckets[10]].iloc[69]  is last one ; i = 70 is out of bounds
-        df[buckets[10]].iloc[i] = shock_size
+    # Time of running this function is, on average, 0.00000 seconds.
+    return shocks
 
-    # Loop over the specified values of i
-    #for i in [1, 30]:
-        # Access the column df[buckets[i]]
-    #    column_name = buckets[i]
 
-        # Modify the specified ranges of rows
-    #    for j in range(60, 69):
-    #        df.loc[j, column_name] = shock_size  # Using .loc to access by label/index
-
-     #   for j in range(0, 1):
-     #       df.loc[j, column_name] = shock_size  # Using .loc to access by label/index
-
-    # TODO! end
-    # Drop the last bucket (100) as it is not needed
-    df = df.drop(100, axis=1)
-
-    # TODO! Debugging_steps - general shock table - date is not even needed, since aply same for all dates
-    # can write this one to EXCEL
-
-    
-    return df
-
-  #"""
-  #Interpolating for half-years - side-eff 1
-  #"""
+# """
+# Interpolating for half-years - side-eff 1
+# """
 
 # TODO: temp function, can split up functionality
-
-def create_semi_annual_bond_curves(curves) -> pd.DataFrame: # curves from ftse curves
+def create_semi_annual_bond_curves(curves) -> pd.DataFrame:  # curves from ftse curves
     # Interpolating bond curves for half-year intervals (linear interpolation; take average of up-down years)
     curves_mod = pd.DataFrame(
         columns=['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate'],
@@ -226,15 +220,15 @@ def create_semi_annual_bond_curves(curves) -> pd.DataFrame: # curves from ftse c
 # Does NOT modify bond curves parameter; assigns to new value from reference data by dereferencing value
 
 # Applies the shocks to the bond curves for each rating and store results in shocks_dict - side eff 2 (main eff...major purpose)
-def create_shock_tables(curves, GivenDate: datetime) -> dict[str, Any]: # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
+def create_shock_tables(curves, GivenDate: datetime) -> dict[
+    str, Any]:  # CURVES are BOND CURVES (not yet interpolated, just from get_bond_curves) - would help with objectify here so we know what it needs to be can decouple and use specific forced fn attr method etc from bond curves TODO!
     """
     Function to create up and down shock tables for bond curves
     """
     # makes a dictionary containing tables for up shocks and down shocks for each rating
     shocks_dict = {}
-    up_shocks = create_general_shock_table() # creates a df with col named '0', '1', etc
+    up_shocks = create_general_shock_table()  # creates a df with col named '0', '1', etc
     # """old code
-
 
     cur_date = GivenDate.strftime('%Y%m%d')
 
@@ -255,15 +249,16 @@ def create_shock_tables(curves, GivenDate: datetime) -> dict[str, Any]: # CURVES
 
     # can use general writer for this - adopt this into general writer (this works already as one sheet so use this code)
 
-    down_shocks = create_general_shock_table() # TODO: lol
-    down_shocks = -down_shocks # can decouple into classes
-    down_shocks[0] = -down_shocks[0] # this column (called '0' lmao) holds the bucket numbers, such a weird df... it has both indices and col with dupe nums, guess this fn expects that
+    down_shocks = create_general_shock_table()  # TODO: lol
+    down_shocks = -down_shocks  # can decouple into classes
+    down_shocks[0] = -down_shocks[
+        0]  # this column (called '0' lmao) holds the bucket numbers, such a weird df... it has both indices and col with dupe nums, guess this fn expects that
     # end of old code """
 
     #### Interpolates BOND CURVES for half years
 
     ## (*begin) Interpolates half-year curves (avg of 1, 2y rate for 1.5 yr curve
-        # 1+1/2 is average of 1y and 2y rate)
+    # 1+1/2 is average of 1y and 2y rate)
 
     # Interpolating bond curves for half-year intervals (linear interpolation; take average of up-down years)
     curves_mod = pd.DataFrame(
@@ -279,7 +274,7 @@ def create_shock_tables(curves, GivenDate: datetime) -> dict[str, Any]: # CURVES
     curves_mod.loc[0.5] = curves_mod.loc[1]
     curves_mod.fillna(method='ffill', inplace=True)
 
-    cur_date = GivenDate.strftime('%Y%m%d') # givendate to str - consider doing it here or as fn
+    cur_date = GivenDate.strftime('%Y%m%d')  # givendate to str - consider doing it here or as fn
 
     CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
                                        'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
@@ -312,6 +307,7 @@ def create_shock_tables(curves, GivenDate: datetime) -> dict[str, Any]: # CURVES
             shocks_dict[table_name] = df
 
     return shocks_dict
+
 
 # (*begin) Takes each year and looks at rating and FTSE universe (half-year would be from .25 to .75; up quarter year and down quarter year for half year, and so on for every year
 
@@ -373,94 +369,8 @@ def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
 
 """ Notional Weighting """
 
-# Function to calculate the average coupon rate for a specific bond rating and year
-# It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
-# The average coupon is weighted by the notional weight of the bond, excluding REITs.
-# Average coupon is normalized by balancing one SUMPRODUCT against another. (Can delete)
-def calc_avg_coupon_market_weight(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
-    """
-    Calculates the average coupon rate for a specific bond rating and year, weighted by the market weight of the bond.
-
-    Parameters:
-    year (float): The specific year (maturity) to calculate the coupon for.
-    rating (str): The bond rating category (e.g., 'Federal', 'CorporateAAA_AA', etc.).
-    ftse_data (pd.DataFrame): A DataFrame containing FTSE bond data.
-
-    Returns:
-    float: The average coupon rate for the specified bond rating and year.
-    """
-    # Determine the column to filter by: "RatingBucket" for most bonds, or "Sector" for 'Corporate'
-    column_to_look_in = "RatingBucket"
-    if rating == 'Corporate':
-        column_to_look_in = "Sector"  # Corporate bonds are filtered by 'Sector'
-
-    # Define the term bounds (quarter-year before and after the specified year)
-    lower_bound = year - 0.25
-    upper_bound = year + 0.25
-
-    """ can also use a filter (boolean mask) here: """
-
-    # In code: LB <= filtered_coupons < UB
-    #
-    # Filter FTSE data for bonds that:
-    # 1. Match the rating or sector
-    # 2. Have a term (maturity year) within the bounds
-    # 3. Have a positive market weight excluding REITs
-    df = ftse_data.loc[(ftse_data[column_to_look_in] == rating) &
-                       (ftse_data['TermPt'] < upper_bound) &  # coupon < UB, coupon >= LB
-                       (ftse_data['TermPt'] > (lower_bound - 0.001)) & # >= lower bound ; why not just use >=?
-                       (ftse_data['marketweight_noREITs'] > 0)]
-
-    # If no bonds match the criteria, return a coupon rate of 0
-    if df.empty:
-        return 0
-
-    # (filtered df above)
-
-    weighted_sum = (df['mvai'] * df['marketweight_noREITs'] * (1/df['price'])).sum() # is there an equivalent np.sum() operation?
-
-    weighted_sum_with_coupon = (df['mvai'] * df['marketweight_noREITs'] * (1/df['price']) * df['annualcouponrate']).sum()
-
-    average_coupon = (weighted_sum_with_coupon / weighted_sum) / 2  # accounts for semi-annual coupons
-
-    """
-    # Otherwise, calculate the weighted average coupon rate, dividing by 2 for semi-annual coupon payments. As follows:
-    # 1. Multiply the market weight by the coupon rate and divide by the market value-adjusted interest (mvai).
-    # 2. Divide the sum of these weighted values by the sum of market weights/mvai.
-    avg_coupon = ((df['marketweight_noREITs'] * df['annualcouponrate'] / df[
-        'mvai']).sum() /  # Change in code to use the price (SAME as EXCEL) ****
-                  (df['marketweight_noREITs'] / df['mvai']).sum()) / 2  # Divide by 2 to account for semi-annual coupons
-    """
-
-    # Return the calculated average coupon rate for the given rating and year (average was 0 if no matching bonds were found from FTSE bond databank)
-
-    return average_coupon
 
 # TODO: Cashflows * interpolated (unshocked) curves
-
-def calc_pv_two(coupons: pd.DataFrame, rating: str, semi_annual_curves: pd.DataFrame): # use generic bond curves for now
-    """
-    Calculates the present value (PV) of bonds for a specific bond rating and year.
-
-    Parameters:
-    year (float): The specific year (maturity) to calculate the PV for.
-    rating (str): The bond rating category (e.g., 'Federal', 'CorporateAAA_AA', etc.).
-    ftse_data (pd.DataFrame): A DataFrame containing FTSE bond data.
-
-    Returns:
-    float: The present value (PV) for the specified bond rating and year.
-    """
-    # Determine the column to filter by: "RatingBucket" for most bonds, or "Sector" for 'Corporate'
-    #for i in range(0, 70):
-
-    #coupons.iloc[:, :73]
-
-    # I.e., Calculate the present value (PV) as the weighted sum of market value-adjusted interest (mvai)
-    # TODO: change to excel!
-    pv = coupons * semi_annual_curves # use array broadcasting, hopefully it applies on all the cols of coupons which by that i mean the cfs (includes principal)
-
-    # Return the calculated present value for the given rating and year
-    return pv
 
 
 # Function to calculate the present value (PV) of bonds for a specific rating and year
@@ -619,78 +529,13 @@ def create_sensitivity_tables(cashflows: Dict[str, pd.DataFrame], shocks: Dict[s
         # Store the calculated sensitivity table for the rating
         sensitivities_dict[rating] = average_sensitivity
 
-        """ Try this if the above doesn't work:
-        # Insert bucket names for KRD and normalize by present values (PV)
-        average_sensitivity.insert(0, 'Bucket', [1, 2, 3, 5, 7, 10, 15, 20, 25, 30])
-
-        # Removed: avg_sensitivity = average_sensitivity - Brenda
-        
-        # Normalize the sensitivities by the cashflow present values (PV)
-        for x in range(10):
-            for i in range(70):
-                average_sensitivity.iloc[x, i + 1] = average_sensitivity.iloc[x, i + 1] / cashflows[rating + 'PV'].iloc[i]
-
-        # Store the calculated sensitivity table for the rating
-        sensitivities_dict[rating] = average_sensitivity
-        """
 
     return sensitivities_dict
 
 
-"""    # Create empty DataFrames for storing up and down shock sensitivities
-        df_up = pd.DataFrame(columns=buckets_krd[1:], index=range(71))
-        df_up.insert(0, 'Bucket', list(np.linspace(start=0, stop=35, num=71)))
-
-        df_down = pd.DataFrame(columns=buckets_krd[1:], index=range(71))
-        df_down.insert(0, 'Bucket', list(np.linspace(start=0, stop=35, num=71)))
-
-        # Old:
-        #'''
-        for x in range(1,11):
-            for i in range(70):
-
-                df_up.iloc[i, x] = np.sum(cfs.iloc[i, 3:] * ups.iloc[:, x])  # cashflows table, sum prod
-                df_down.iloc[i, x] = np.sum(cfs.iloc[i, 3:] * downs.iloc[:, x])
-        #'''
-        # New (Brenda):
-        #df_up = np.sum(cfs.iloc[:, 3:].values * ups.values[:, 1:], axis=1)
-        #df_down = np.sum(cfs.iloc[:, 3:].values * downs.values[:, 1:], axis=1)
-        # New (Brenda)
-
-        up_shock_sensitivities = df_up
-        down_shock_sensitivities = df_down
-        average_sensitivity = (down_shock_sensitivities - up_shock_sensitivities)/2 * 10000
-
-        #average_sensitivity = (average_sensitivity.divide(ups.iloc[:,0]*100) * 10000).iloc[:,1:]
-        average_sensitivity['Bucket'] = list(np.linspace(start=.5, stop=35.5, num=71))
-
-        average_sensitivity = average_sensitivity.transpose()
-
-        average_sensitivity = average_sensitivity.drop(70, axis=1)
-
-        average_sensitivity = average_sensitivity.iloc[1:]
-
-        average_sensitivity.insert(0, 'Bucket', [1, 2, 3, 5, 7, 10, 15, 20, 25, 30])
-
-        avg_sensitivity = average_sensitivity
-
-        for x in range(10):
-            for i in range(70):
-                average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / cashflows[rating + 'PV'].iloc[i]
-
-        sensitivities_dict[rating] = average_sensitivity
-
-    return sensitivities_dict"""
-## (*end)
-
-from typing import Dict
-
-import pandas as pd
-import numpy as np
-from typing import Dict
 
 
-def make_cashflow_table(weights: Dict[str, pd.DataFrame], cashflows: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def make_cashflow_table_huh(weights: Dict[str, pd.DataFrame], cashflows: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
     Creates a final cashflow allocation table by combining cashflows with market weights for each bond rating.
 
@@ -773,7 +618,7 @@ def make_krd_table(weights: Dict[str, pd.DataFrame], sensitivities: Dict[str, pd
     # makes the final KRD table based on sensitivities and market weight and puts it all together in one dataframe
 
 
-def make_CFs_buckets_table(weights: Dict[str, pd.DataFrame],
+def make_CFs_buckets_table_huh(weights: Dict[str, pd.DataFrame],
                            cashflows_seventy: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
     Creates a cashflow allocation table by combining market weights and cashflows for each bond rating.
@@ -817,9 +662,6 @@ def make_CFs_buckets_table(weights: Dict[str, pd.DataFrame],
 
 # def get_bucket_size(weights: Dict[str, pd.DataFrame], cashflows: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
-
-import os
-from datetime import datetime
 
 
 
@@ -892,7 +734,6 @@ def get_expected_returns() -> pd.DataFrame:
 # what did i think and mention
 
 
-from datetime import datetime
 
 def BSTotals(given_date: datetime, sheet_version: int) -> dict:
     """
