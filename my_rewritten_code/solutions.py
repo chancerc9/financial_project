@@ -206,7 +206,7 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
 
 
     # Split into public, private, and mortgage tables (defining them)
-    df_public = df.iloc[:5]
+    df_public = df.iloc[:5].copy() # TODO! added a new change here with explicitly stating .copy() - i believe or guess it was implicit before, here
 
     # Defining private, public, and mortgage tables individually by ALM Team defined definition:
 
@@ -214,14 +214,23 @@ def reading_asset_mix(Given_date: pd.Timestamp, curMonthBS: bool = False,
     df_public.rename({'CorpAAA_AA': 'CorporateAAA_AA', 'CorpA': 'CorporateA', 'CorpBBB': 'CorporateBBB'},
                      inplace=True)
 
+    # .drop() explicitly creates a new df, hence, avoiding ambiguity or warnings for/from Pandas
     df_private = df.iloc[5:11].drop(columns=['SEGFUNDS']) # mortgages are modelled from privates
+
     #  privates are modelled with CorpA and CorpAAA bonds  (considering our private assets are not existing in FTSE universe)
     df_private.rename({'PrivateAA': 'CorporateAAA_AA', 'PrivateA': 'CorporateA', 'PrivateBBB': 'CorporateBBB',
                        'MortgagesInsured': 'Federal'}, inplace=True)
 
     # Define mortgages from private_df rows
-    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'CorporateBBB'},
-                                                                       inplace=False)  # orig: inplace=True; use inplace=FALSE for debugging purposes.
+    df_mortgages = df_private.loc[['Federal', 'MortgagesConv']].copy()
+    df_mortgages.rename({'MortgagesConv': 'CorporateBBB'}, inplace=True)
+
+    # Old code: (New code should have same functionality but more explicit)
+    """
+    df_mortgages_old = df_private.loc[['Federal', 'MortgagesConv']].rename({'MortgagesConv': 'CorporateBBB'},
+                                                                           inplace=False)  # orig: inplace=True; use inplace=FALSE for debugging purposes.
+    """
+    # bool = df_mortgages_old.equals(df_mortgages)
 
     # Final dropping of rows to define df_private:
     df_private.drop(['PrivateBB_B', 'MortgagesConv', 'Federal'], inplace=True)
@@ -317,7 +326,10 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
                         ''' First get the amount to be placed in the first 2 buckets'''
                         bnds = helpers.calc_bounds(given_date, portfolio, sum(
                             Asset_mix[portfolio]))  # Looks at a single column for each segment (?)
-                        new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
+                        # Old: # TODO!
+                        # new_row_df = pd.DataFrame(0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
+                        # New change to float
+                        new_row_df = pd.DataFrame(0.0, index=np.arange(1), columns=[0, 1, 2, 3, 4, 5])
                         new_row_df.iloc[0, 0] = bnds[0][0]
                         new_row_df.iloc[0, 1] = bnds[1][0]
                         if (rating == 'corporateBBB'):
@@ -484,7 +496,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
                 solution = minimize(objective, x0, method='SLSQP', bounds=bnds, constraints=cons)
 
             if solution.success:
-                misc.log('Successful optimization for ' + rating + ' bonds in ' + portfolio, LOGFILE)
+                misc.log('Successful optimization for ' + rating + ' bonds in ' + portfolio, LOGFILE) # TODO! utilize this logging methodology for elsewhere
 
             ''' Append the solved weights to the solution_df '''
             new_row_df = pd.DataFrame(solution.x).T

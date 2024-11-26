@@ -272,7 +272,17 @@ def create_shock_tables(curves, GivenDate: datetime) -> dict[
             curves_mod.loc[yr, rating] = (curves.loc[yr + .5, rating] + curves.loc[yr - .5, rating]) / 2
 
     curves_mod.loc[0.5] = curves_mod.loc[1]
-    curves_mod.fillna(method='ffill', inplace=True)
+
+    # curves_mod_old = curves_mod.fillna(method='ffill', inplace=False) # TODO! old code
+
+    # Forward fill nans
+    curves_mod.ffill(inplace=True)
+
+    # Handle type inference, if needed
+    curves_mod = curves_mod.infer_objects(copy=False)
+
+    # curves_mod.fillna(method='ffill', inplace=True) # TODO! old code
+    # bool = curves_mod_old.equals(curves_mod) # bool: True as needed
 
     cur_date = GivenDate.strftime('%Y%m%d')  # givendate to str - consider doing it here or as fn
 

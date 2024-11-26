@@ -423,7 +423,9 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
 
         benchmark_weights = portfolio_solution.mul(asset_mix[portfolio], axis=0)
         benchmark_weights = benchmark_weights / asset_mix[portfolio].sum()
-        benchmark_div_universe = (benchmark_weights / totals).fillna(0).infer_objects(copy=False) # TODO! new change on infer_objects
+        benchmark_div_universe = (benchmark_weights / totals)
+        benchmark_div_universe = benchmark_div_universe.fillna(0).infer_objects(copy=False) # TODO! new change on infer_objects
+
         if asset_type == 'mortgage':
             benchmark_div_universe.loc['Provincial'] = 0
             benchmark_div_universe.loc['CorporateAAA_AA'] = 0
