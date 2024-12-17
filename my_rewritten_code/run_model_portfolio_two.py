@@ -8,7 +8,7 @@ Functions:
 Side effects:
 
 """
-from Web_flask.web_flask.utility.template_filters import datetime
+from flask.logging import has_level_handler
 
 """
     This provided code is a complex script that processes bond-related data, 
@@ -16,42 +16,90 @@ from Web_flask.web_flask.utility.template_filters import datetime
     calculates cashflows from solution.
 
     It is "safe" to be ran as many times as warranted.
+
 """
 
+"""
+Definitions
+
+ASSET CLASS: mortgage, public, private (split the items into ratings or UL, PAR, SURPLUS, etc)
+
+--- separate ---
+
+SEGMENTS: UL, PAR, SURPLUS
+- a.k.a. 'portfolio'
+These are broader categories for assets, each of which has a different allocated asset mix.
+
+RATINGS:
+- a.k.a. asset types, asset mix
+
+To determine the asset types per segment, multiply the segment balance by the asset mix percentage that is unique to each
+segment. This percentage matrix is called the "Asset Mix.xlsx" file, where the segment balances and total asset balance is 
+called the "SBS Totals.xlsx" file. # This holds the liabilities, asset, and totals balance for all segments.
+
+A: Assets
+1. Calculate cashflows from FTSE universe.
+2. Calculate KRDs from cashflows from FTSE universe.
+
+B:
+1. Bring in liability sensitivities through balance sheet and asset percentage matrix. The liabilities for our holdings. (FALSE)
+1. Bring in liability sensitivities through "Targets by Asset Class.xlsx" as the targets to hedge asset krds and liabilities to.
+
+OPTIMIZATION:
+The calculated KRDs (simple) and brought-in KRDs from "Targets by Asset Class.xlsx" (to match) are matched during this 
+process.
+
+We essentially match the asset KRDs to liability KRDs for liabilities hedging, and perform an optimization function to 
+maximize returns for Totals.
+"""
 # Standard library imports
+import argparse
+import datetime as dt
+import json
 import os
 import sys
+import traceback
+from collections import OrderedDict
+from typing import Dict
 
 # Third-party imports
+import numpy as np
+import openpyxl
 import pandas as pd
+from dateutil.relativedelta import relativedelta
+from psycopg2.extras import DictCursor
+from scipy.optimize import minimize
+
 # Local application-specific imports
+from equitable.chronos import offsets, conversions
+from equitable.db.db_functions import execute_table_query
 from equitable.db.psyw import SmartDB
-from equitable.infrastructure import sysenv
+from equitable.infrastructure import sysenv, jobs, sendemail
 from equitable.utils import processtools as misc
 
 # Adding system path for custom imports
 sys.path.append(sysenv.get("ALM_DIR"))
 
 # Required custom modules
+import calculations
 import solutions as model_portfolio
 import cashflows_and_benchmark_tables
 import cli
 import datahandler as datahandler
 import file_utils
-import helpers
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
 
 # Database connections (Benchmark, Bond, and General)
-#BM_conn = SmartDB('Benchmark')
-#BM_cur = BM_conn.con.cursor()
+BM_conn = SmartDB('Benchmark')
+BM_cur = BM_conn.con.cursor()
 
-#Bond_conn = SmartDB('Bond')
-#Bond_cur = Bond_conn.con.cursor()
+Bond_conn = SmartDB('Bond')
+Bond_cur = Bond_conn.con.cursor()
 
-#General_conn = SmartDB('General')
-#General_cur = General_conn.con.cursor()
+General_conn = SmartDB('General')
+General_cur = General_conn.con.cursor()
 
 # Logging directories:
 MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
@@ -59,90 +107,135 @@ os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
 LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
                'a')  # Append to the existing logfile, or create a new one
 
-import os
-from typing import Union
 
-import os
-from typing import Union
+# Generalized function for optimization
+def process_asset_type(asset_type, KRDs, GivenDate):
+    misc.log(f"Optimizing {asset_type}", LOGFILE)
+    solution = model_portfolio.optimization(KRDs, GivenDate, asset_type=asset_type)
+    print(f"Successfully optimized: {asset_type}")
+    return solution
 
 
-def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
+# Generalized function for writing solutions.xlsx to Excel
+def write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate):
+    if not os.path.exists(solutions_path):
+        with pd.ExcelWriter(solutions_path) as writer:
+            # Write solutions dynamically based on available data
+            for asset_type, solution in solutions.items():
+                solution.to_excel(writer, sheet_name=f"{asset_type}_solution")
+            # Write shared data
+            KRDs.to_excel(writer, sheet_name="asset KRDs")
+            mixes = model_portfolio.reading_asset_mix(GivenDate)
+            mixes[0].to_excel(writer, sheet_name="public asset mix")
+            mixes[1].to_excel(writer, sheet_name="private asset mix")
+            mixes[2].to_excel(writer, sheet_name="mort asset mix")
+        print("Successfully output solutions.xlsx file")
+    else:
+        print("solutions.xlsx file already exists - can't make a file with the same name")
+
+
+
+
+def read_specific_solutions(excel_file_path: str) -> dict:
     """
-    Constructs a directory path from the given segments and ensures that the directory exists.
-    If the directory does not exist, it will be created. If it already exists, no error is raised.
-    Parameters:
-    path_segments (str or bytes): The parts that form the directory path. This can be passed as
-                                  multiple string arguments or a tuple of strings.
-    Returns:
-    str: The full, absolute path of the directory.
-    Example:
-        build_and_ensure_directory('some', 'nested', 'directory')
-        # Ensures 'some/nested/directory' exists and returns that path.
+    Reads the 'public_solution', 'mortgage_solution', and 'private_solution' sheets
+    from the provided Excel workbook. Returns a dictionary mapping sheet names to DataFrames.
+    Parameters
+    ----------
+    excel_file_path : str
+        The full path to the Excel file containing the required sheets.
+    Returns
+    -------
+    dict
+        A dictionary with keys 'public_solution', 'mortgage_solution', 'private_solution',
+        and values as the corresponding Pandas DataFrames.
+    Raises
+    ------
+    FileNotFoundError
+        If the specified Excel file does not exist or is unreadable.
+    ValueError
+        If one or more of the required sheets are missing from the workbook.
+    Examples
+    --------
+    >>> dfs = read_specific_solutions("path/to/data_solutions.xlsx")
+    >>> public_df = dfs["public_solution"]
+    >>> mortgage_df = dfs["mortgage_solution"]
+    >>> private_df = dfs["private_solution"]
     """
-    directory_path = os.path.join(*path_segments)
-    os.makedirs(directory_path, exist_ok=True)
-    return directory_path
+    required_sheets = ["public_solution", "mortgage_solution", "private_solution"]
+    # First, we verify that the file can be opened and the required sheets exist.
+    try:
+        excel_obj = pd.ExcelFile(excel_file_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Could not find or open the Excel file at: {excel_file_path}")
+    except Exception as e:
+        raise ValueError(f"An error occurred while reading the Excel file: {e}")
+    missing_sheets = [sheet for sheet in required_sheets if sheet not in excel_obj.sheet_names]
+    if missing_sheets:
+        raise ValueError(
+            f"The following required sheets are missing from {excel_file_path}: {missing_sheets}"
+        )
+    # Read the three sheets into a dictionary of DataFrames.
+    solutions = {}
+    for sheet in required_sheets:
+        df = pd.read_excel(excel_file_path, sheet_name=sheet, index_col=0)
+        asset_type_name = sheet.replace("_solution", "")
+        solutions[asset_type_name] = df
+    return solutions
 
 
 def main():  # model_portfolio.py new version
     """
-    Functionality:
-    - gathers user input
-    - creates variables,
-    - produces output
-    - (modifies and runs the appropriate optimizations, and saves the results.)
+    Main function to orchestrate the portfolio optimization process.
+    It gathers user input, runs the appropriate optimizations, and saves the results.
 
-    This function orchestrates the portfolio optimization process and saves results to Excel files;
-    it creates model portfolio solutions file, benchmarking file, and cashflows from solutions.
+    Creates model portfolio, benchmarking file, and cashflows from solutions.
     """
 
     # ----- A: Set Program Configurations: -------
     # Retrieve user input for program:
-    args, GivenDate = cli.get_user_info()   # retrieves user input for the program
+    args, GivenDate = cli.get_user_info()
     # GivenDate in string form:
-    cur_date: str = GivenDate.strftime('%Y%m%d')    # current date
-    timestamp: str = datetime.now().strftime("%Y%m%d-%H%M%S")   # time as of now
+    cur_date: str = GivenDate.strftime('%Y%m%d')
 
-
-    # Ensure input-output directories exist:
-    base_dir: str = sysenv.get('PORTFOLIO_ATTRIBUTION_DIR')
-
-    # Output directory for solutions and debugging files:
-    output_directory: str = helpers.build_and_ensure_directory(base_dir, 'Benchmarking', 'code_benchmarking_outputs', cur_date)
-    print(f"Directory created or ensured:{output_directory}")
-    
-    # Timestamped solutions directory:
-    SOLUTIONS_DIR: str = helpers.build_and_ensure_directory(output_directory, timestamp)
-    
-    # Output directory for debugging files:
-    DEBUGGING_DIRECTORY: str = helpers.build_and_ensure_directory(output_directory, 'debugging_steps')
-    
-    # Specific output file paths for 3 solutions files:
-    # Define file-name paths for output items:
-    solutions_path = SOLUTIONS_DIR + '/solutions' + cur_date + '.xlsx'
-    custom_benchmarks_path = SOLUTIONS_DIR + '/Custom_benchmark_' + cur_date + '.xlsx'
-    cfs_path = SOLUTIONS_DIR + '/CFs' + cur_date + '.xlsx'
-
-    
     # Define Results Directory (output):
-    output_directory: str = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
+    OUTPUT_DIR_PATH: str = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
                                         'benchmarking_outputs',
-                                        'Brenda', cur_date)
-    os.makedirs(output_directory, exist_ok=True)
+                                        'Brenda', cur_date)  # Test path - Brenda
+    os.makedirs(OUTPUT_DIR_PATH, exist_ok=True)
 
     # Define Debugging_Steps Directory (debugging outputs):
-    DEBUGGING_DIRECTORY = os.path.join(output_directory, 'Debugging_Steps')
-    os.makedirs(DEBUGGING_DIRECTORY, exist_ok=True)
+    CURR_DEBUGGING_PATH = os.path.join(OUTPUT_DIR_PATH, 'Debugging_Steps')
+    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
 
+    # Define file-name paths for output items:
+    # existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
+    existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
+
+    solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
+    # solutions_path = OUTPUT_DIR_PATH + '/solutions' + cur_date + '.xlsx'
+    custom_benchmarks_path = OUTPUT_DIR_PATH + '/Custom_benchmark_' + cur_date + '.xlsx'
+    cfs_path = OUTPUT_DIR_PATH + '/CFs' + cur_date + '.xlsx'
 
     # ----- B: Run Model Portfolio (Main code + logging): ------
+    # Example usage:
+    excel_path = solutions_path
+
+    try:
+        dataframes_dict = read_specific_solutions(excel_path)
+        # At this point, dataframes_dict contains the three DataFrames keyed by their sheet names.
+        # You may proceed with further analysis or transformations here.
+    except Exception as err:
+        # Handle the error as appropriate for your environment—logging, re-raising, etc.
+        print(f"Error encountered: {err}")
+
+
     try:
         # Start logging:
         misc.log(f'Starting run of: {GivenDate}', LOGFILE)
 
         # Log 'Step 1':
-        # misc.log('Begin Process: Read-in data from database and set user input', LOGFILE)
-        print('Begin Process: Read-in data from database and set user input')
+        misc.log('Begin Process: Read-in data from database and set user input', LOGFILE)
 
         # 1.1) Retrieve semiannual bond curve data across 35 years.
         bond_curves = datahandler.get_bond_curves(
@@ -155,7 +248,7 @@ def main():  # model_portfolio.py new version
         ftse_data = ftse_handler.data  # Retrieve a copy of the FTSE bond data DataFrame.
 
         # Output items:
-        file_utils.write_results_to_excel_one_sheet(ftse_data, DEBUGGING_DIRECTORY, cur_date, 'ftse_data')
+        file_utils.write_results_to_excel_one_sheet(ftse_data, CURR_DEBUGGING_PATH, cur_date, 'ftse_data')
 
         # Define the mask for conditionals
         mask = {
@@ -172,27 +265,26 @@ def main():  # model_portfolio.py new version
         user_configs = {
             "custom_benchmarks": args.benchmarks,
             "cfs": args.cfs,
-    
+
         }
-        
+
         if not (args.benchmarks,args.cfs):
             user_configs = {key: True for key in mask2}
         """
 
         # ---- Main logic for Model Portfolio: -----
 
-        # misc.log('Step 2: Create 70 bucket cashflows and calculate asset KRDs from excel inputs', LOGFILE)
+        misc.log('Step 2: Create 70 bucket cashflows and calculate asset KRDs from excel inputs', LOGFILE)
 
         # 2.1. Create 70 bucket cashflows from a copy of FTSE data and create 6 bucket KRDs from cashflows:
-        KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data,
-                                                  GivenDate)  # sensitivities variable is 70 bucket KRDs
+        misc.log(
+            'Step 3: Read in liability KRDs from excel inputs; optimize asset KRDs and liability KRDs; output to a solutions.xlsx file',
+            LOGFILE)
 
-        # misc.log('Step 3: Read in liability KRDs from excel inputs; optimize asset KRDs and liability KRDs; output to a solutions.xlsx file', LOGFILE)
-
-        # misc.log('Create dictionaries to hold results', LOGFILE)
+        misc.log('Create dictionaries to hold results', LOGFILE)
 
         # For solutions. Calculates asset KRDs, brings in liability KRDs, runs optimization function in Python (output: solutions.xlsx). Model Portfolio.
-        solutions = {}
+        solutions = dataframes_dict
         # For ALM team Custom benchmarks. Generates quarterly Model Portfolio tables file to use for benchmarking code (output: Custom_benchmarks.xlsx).
         summary = {}
         data = {}
@@ -200,25 +292,10 @@ def main():  # model_portfolio.py new version
         summed_cashflows = {}
 
         # print("Optimizing solutions")
-        # misc.log('Optimizing solutions', LOGFILE)
+        misc.log('Reading solutions', LOGFILE)
 
-        # Process only the specified conditions
-        for asset_type, condition in mask.items():
-            if condition:
-                solutions[asset_type] = helpers.process_asset_type(asset_type, KRDs, GivenDate)
-                """
-                misc.log(f"Optimizing {asset_type}", LOGFILE)
-                solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)
-                print(f"Successfully optimized: {asset_type}")
-                """
-        print("Successfully ran: solutions")
-        # misc.log("Successfully ran: solutions", LOGFILE)
-
-        # Write solutions to Excel
-        helpers.write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate)
-
-        # misc.log("Creating Custom_benchmark.xlsx", LOGFILE)
-        print("Creating Custom_benchmark.xlsx")
+        misc.log("Creating Custom_benchmark.xlsx", LOGFILE)
+        # print("Creating Custom_benchmark.xlsx")
 
         for asset_type, condition in mask.items():
             if condition:
@@ -227,8 +304,8 @@ def main():  # model_portfolio.py new version
                                                                                          GivenDate,
                                                                                          ftse_handler.data,
                                                                                          asset_type)
-        print("Successfully ran: Creating tables for Custom benchmarks")
-        # misc.log("Successfully ran: Creating tables for Custom benchmarks", LOGFILE)
+        # print("Successfully ran: Creating tables for Custom benchmarks")
+        misc.log("Successfully ran: Creating tables for Custom benchmarks", LOGFILE)
 
         # Map asset types to their respective data
         dict_data = {
@@ -248,8 +325,8 @@ def main():  # model_portfolio.py new version
         else:
             print("Custom benchmarks file for this date already exists - can't make a file with the same name.")
 
-        print("Creating cashflows from solutions: CFs.xlsx")
-        # misc.log("Creating cashflows from solutions: CFs.xlsx", LOGFILE)
+        # print("Creating cashflows from solutions: CFs.xlsx")
+        misc.log("Creating cashflows from solutions: CFs.xlsx", LOGFILE)
 
         for asset_type, condition in mask.items():
             if condition:
@@ -263,8 +340,8 @@ def main():  # model_portfolio.py new version
                                                                                                             GivenDate,
                                                                                                             asset_type)
 
-        print('Successfully ran: Cashflows from solutions.')
-        # misc.log('Successfully ran: Cashflows from solutions.', LOGFILE)
+        # print('Successfully ran: Cashflows from solutions.')
+        misc.log('Successfully ran: Cashflows from solutions.', LOGFILE)
 
         SEGMENTS = ('NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'TOTAL', 'SURPLUS')
 
@@ -294,6 +371,7 @@ def main():  # model_portfolio.py new version
         # # jobs.jobStatusUpdate(args.jobname, 'ERROR')
 
 
+
 if __name__ == "__main__":
     main()
 
@@ -316,3 +394,11 @@ if copied.equals(KRDs):
 else:
     print("The data has been modified")
 """
+
+# actually, have do_all be an else case lol
+
+
+# Can probably check if_exist before running / creating Custom_benchmarks tables to just output some:
+# Solutions will ALWAYS run since needed for even 1 table
+# cashflows should always run IMO since part of both debugging and mandatory
+

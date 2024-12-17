@@ -13,41 +13,13 @@ Side effects:
 """
 
 """
-# class or decorator to_excel -> so functions can be more descriptive without needing excel in front of every one of
+# Future implementations: class or decorator to_excel -> so functions can be more descriptive without needing excel in 
+front of every one of the names.
 
 # can have PATH be a parameter for this
 # and put it in various (decoupled) functions in main
 """
 
-# Standard library imports
-import argparse
-import datetime as dt
-import json
-import os
-import sys
-import traceback
-from collections import OrderedDict
-from typing import Dict
-
-# Third-party imports
-import numpy as np
-import openpyxl
-import pandas as pd
-from dateutil.relativedelta import relativedelta
-from psycopg2.extras import DictCursor
-from scipy.optimize import minimize
-
-# Local application-specific imports
-from equitable.chronos import offsets, conversions
-from equitable.db.db_functions import execute_table_query
-from equitable.db.psyw import SmartDB
-from equitable.infrastructure import sysenv, jobs, sendemail
-from equitable.utils import processtools as misc
-
-# Required custom modules
-#from config import DEBUGGING_PATH
-
-#GLOBAL_PATH = DEBUGGING_PATH
 
 """
 ExcelWriters
@@ -71,12 +43,81 @@ def write_data_to_excel(data, file_path):
     
 """
 
-# all items in one sheet, need to write this
+import os
+import pandas as pd
+from pathlib import Path
+from typing import Dict
+
+class ExcelOutputWriter:
+    def __init__(self, base_dir: str, cur_date: str):
+        self.base_dir = Path(base_dir)
+        self.cur_date = cur_date
+    def _ensure_directory_exists(self, directory: Path) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+    def write_single_sheet_in_named_dir(
+        self,
+        df: pd.DataFrame,
+        excel_filename: str
+    ) -> None:
+        """
+        Writes a single DataFrame to an Excel file in a directory named after excel_filename.
+        Resulting file: {base_dir}/{excel_filename}/{excel_filename}_{cur_date}.xlsx
+        """
+        folder_path = self.base_dir / excel_filename
+        self._ensure_directory_exists(folder_path)
+        file_path = folder_path / f"{excel_filename}_{self.cur_date}.xlsx"
+        if not file_path.exists():
+            with pd.ExcelWriter(file_path) as writer:
+                df.to_excel(writer, sheet_name=excel_filename)
+            print("Successfully written to debugging steps")
+        else:
+            print(f"{excel_filename} for this quarter already exists - cant make a file with the same name")
+    def write_multiple_sheets_in_dated_dir(
+        self,
+        items: Dict[str, pd.DataFrame],
+        excel_filename: str
+    ) -> None:
+        """
+        Writes multiple DataFrames to a single Excel file, each DataFrame in its own sheet.
+        Resulting file: {base_dir}/{cur_date}/{excel_filename}_{cur_date}.xlsx
+        """
+        output_dir = self.base_dir / self.cur_date
+        self._ensure_directory_exists(output_dir)
+        file_path = output_dir / f"{excel_filename}_{self.cur_date}.xlsx"
+        if not file_path.exists():
+            with pd.ExcelWriter(file_path) as writer:
+                for sheet_name, df in items.items():
+                    df.to_excel(writer, sheet_name=str(sheet_name))
+            print("Successfully written to debugging steps")
+        else:
+            print(f"{excel_filename} for this quarter already exists - delete for new version - cant make a file with the same name")
+    def write_single_sheet_in_dated_dir(
+        self,
+        df: pd.DataFrame,
+        excel_filename: str
+    ) -> None:
+        """
+        Writes a single DataFrame to an Excel file in a directory named after the current date.
+        Resulting file: {base_dir}/{cur_date}/{excel_filename}_{cur_date}.xlsx
+        """
+        folder_path = self.base_dir / self.cur_date
+        self._ensure_directory_exists(folder_path)
+        file_path = folder_path / f"{excel_filename}_{self.cur_date}.xlsx"
+        if not file_path.exists():
+            with pd.ExcelWriter(file_path) as writer:
+                df.to_excel(writer, sheet_name=excel_filename)
+            print("Successfully written to debugging steps")
+        else:
+            print(f"{excel_filename} for this quarter already exists - cant make a file with the same name")
+
+
+
+"""Old"""
+
+# All items in one sheet, need to write this:
 def write_results_to_excel_one_sheet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str,
                                      excel_filename: str):
     """
-    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
-
     Parameters:
     solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
     base_dir (str): The base directory where the Excel file will be stored.
@@ -85,6 +126,7 @@ def write_results_to_excel_one_sheet(item_to_excel: Dict[str, pd.DataFrame], bas
     """
     # Construct the full directory path
     folder_path = os.path.join(base_dir, excel_filename) # , cur_date)
+
     # Ensure the directory exists (create it if necessary)
     os.makedirs(folder_path, exist_ok=True)
 
@@ -100,37 +142,9 @@ def write_results_to_excel_one_sheet(item_to_excel: Dict[str, pd.DataFrame], bas
 
 
 # One sheet per book; multiple books per rating.
-def write_results_to_excel_by_rating_doesnt_work_yet(item_to_excel: Dict[str, pd.DataFrame], base_dir: str,
-                                                     cur_date: str, excel_filename: str):
-    """
-    Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.
 
-    Parameters:
-    solutions (Dict[str, pd.DataFrame]): A dictionary of DataFrame solutions.
-    base_dir (str): The base directory where the Excel file will be stored.
-    cur_date (str): Current date as a string for including in the file name.
-    excel_filename (str): The name of the overall Excel file to save. The file stem name.
-    """
-    # Construct the full directory path
-    output_dir = os.path.join(base_dir, excel_filename, cur_date)
-    # Ensure the directory exists (create it if necessary)
-    os.makedirs(output_dir, exist_ok=True)
 
-    for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        # Construct the full file path for the overall Excel file
-        file_path = os.path.join(output_dir, f'{rating}_{excel_filename}_{cur_date}.xlsx')
-        if not os.path.exists(file_path):
-            with pd.ExcelWriter(file_path) as writer:
-                item_to_excel[rating].to_excel(writer)
-        else:
-            print(
-                'debugging steps files for this date already exists - delete for new version - cant make a file with the same name')
-
-    print("Successfully written to debugging steps")
-
-# Same folder:
-
-# One item per sheet; multiple sheets per book
+# One item per sheet; multiple sheets per book:
 def write_results_to_excel(item_to_excel: Dict[str, pd.DataFrame], base_dir: str, cur_date: str, excel_filename: str):
     """
     Writes the optimization results (solutions) to an Excel file with each DataFrame in a separate sheet.

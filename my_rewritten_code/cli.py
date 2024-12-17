@@ -59,9 +59,13 @@ def get_user_info() -> tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
     parser = argparse.ArgumentParser(description="Model Portfolio")
     parser.add_argument("-d", "--GivenDate", type=str, help="Use YYYY-MM-DD to set the Date for the calculation.")
 
-    # for benchmarking, if desired
-    parser.add_argument('-cb', '--curMonthBS', action='store_true',
-                        help='include to run economics with current month balance sheet instead of previous')  # we give it balance sheet
+    # for debugging, if desired
+    parser.add_argument('-debug', '--debug', action='store_true',
+                        help='debugging files')
+
+    # Use previous solutions file, as desired.
+    parser.add_argument('-use_solutions', '--read_in_solutions_file', action='store_true',
+                        help='use previous solutions file')
 
     # Optional for specific outputs (mortgages, publics, privates)
     parser.add_argument("-m", "--mortgage", action='store_true',

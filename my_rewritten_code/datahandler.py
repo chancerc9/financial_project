@@ -1,99 +1,270 @@
-# TODO: only used in run_code for now but can be used elsewhere
+"""
+Name: datahandler.py or encapsulated_objects.py
 
+Purpose:
+    MODIFIES DATA
+    Allows for data protection via classes
+    Provides data protection
+
+Functions:
+
+Side effects:
+
+"""
 # Standard library imports
-import argparse
-import datetime as dt
-import json
+import datetime
 import os
-import sys
-import traceback
-from collections import OrderedDict
-from typing import Dict
+from datetime import datetime
 
-# Third-party imports
 import numpy as np
+# Third-party imports
 import openpyxl
+# --- Helper Functions ---
 import pandas as pd
-from dateutil.relativedelta import relativedelta
-from psycopg2.extras import DictCursor
-from scipy.optimize import minimize
-
 # Local application-specific imports
-from equitable.chronos import offsets, conversions
 from equitable.db.db_functions import execute_table_query
-from equitable.db.psyw import SmartDB
-from equitable.infrastructure import sysenv, jobs, sendemail
-from equitable.utils import processtools as misc
+from equitable.infrastructure import sysenv
 
 
-def parse_args(): # -> Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
+class FTSEDataHandler:
     """
-    Retrieves command-line arguments and converts them to usable date objects.
+    A class to retrieve, process, and provide controlled access to bond data
+    from the FTSE universe.
 
+    The `FTSEDataHandler` class allows users to retrieve FTSE bond data for a
+    specified date, process it, and access it in a read-only format through
+    a `@property`. Data mutations are internally managed, ensuring that the
+    data remains immutable to external code. Users can refresh the data or
+    update the date through specific methods.
+
+    Side effects:
+        Modifies __data
+        Performs query on SQL database - does not modify database.
+
+    Attributes:
+    ----------
+    given_date : datetime
+        The date for which bond data is retrieved.
+    data : pd.DataFrame
+        A read-only DataFrame containing processed FTSE bond data with additional
+        calculated columns.
+
+    Methods:
+    -------
+    refresh_data():
+        Reloads bond data for the current date (i.e., refreshes data without need to change the current date).
+
+    update_date(new_date):
+        Updates the date for retrieving bond data and refreshes the data.
+    """
+
+    def __init__(self, given_date: datetime):
+        """
+        Initializes the FTSEDataHandler with a specified date.
+
+        Parameters:
+        ----------
+        given_date : datetime
+            The date for which FTSE bond data will be retrieved and processed.
+        Notes:
+        ------
+        The initial data load occurs upon instantiation by calling `_load_data`.
+        """
+        self._given_date = given_date
+        self._data = None
+        self._load_data()
+
+    @property
+    def data(self) -> pd.DataFrame:
+        """
+        Accesses the processed FTSE bond data as a read-only DataFrame.
+
+        Returns:
+        -------
+        pd.DataFrame
+            A copy of the internally stored FTSE bond data DataFrame,
+            preventing external modification.
+
+        Notes:
+        ------
+        The returned DataFrame is a copy of the internal `_data` attribute
+        to ensure immutability. Any changes to the returned DataFrame do not
+        affect the original data stored within the class.
+        """
+        return self._data.copy()
+
+    def _load_data(self):
+        """
+        Retrieves and processes FTSE bond data for the specified date.
+        This method executes an SQL query to fetch bond data, processes it to
+        calculate additional columns, and stores the processed data in `_data`.
+
+        Notes:
+        ------
+        This method is called internally by `__init__` and `refresh_data` to
+        handle data loading. It applies transformations to add calculated
+        columns such as 'marketweight_noREITs', 'Sector', 'RatingBucket',
+        'mvai', 'TermPt', and 'bucket' for analysis.
+        """
+        get_bond_info_query = f"""
+            SELECT date, cusip, term, issuername,
+            annualcouponrate, maturitydate, yield,
+            accruedinterest, modduration, rating,
+            industrysector, industrygroup, industrysubgroup,
+            marketweight, price
+            FROM ftse_universe_constituents
+            WHERE date= '{self._given_date.date()}'
+        """
+
+        # Execute SQL query and create DataFrame:
+        df = pd.DataFrame(execute_table_query(get_bond_info_query, 'Bond', fetch=True))
+        df.columns = ['date', 'cusip', 'term', 'issuername', 'annualcouponrate', 'maturitydate', 'yield',
+                      'accruedinterest', 'modduration', 'rating', 'industrysector', 'industrygroup',
+                      'industrysubgroup', 'marketweight', 'price']
+
+        # --- Process data columns           ---
+        #     Effects: modifies _data values ---
+
+        # a) Calculate the market weight excluding real estate (REITs):
+        total_marketweight = df['marketweight'].sum()
+        real_estate_weight = df[df['industrygroup'] == "Real Estate"]['marketweight'].sum()
+        # Variable name == ['market_weight_noREITs']
+        df['marketweight_noREITs'] = df.apply(
+            lambda row: 0 if row['industrygroup'] == "Real Estate"
+            else row['marketweight'] / (total_marketweight - real_estate_weight) * 100,
+            axis=1)
+
+        # b) Add classification columns for sector (e.g. a bond name) and rating
+        df['Sector'] = df.apply(
+            lambda row: row['industrygroup'] if row['industrysector'] == 'Government' else row['industrysector'],
+            axis=1)
+        # Drop municipal bonds
+        df.drop(df[df['Sector'] == 'Municipal'].index, inplace=True)
+        df['SectorM'] = df['Sector']
+        df['Rating_c'] = df.apply(lambda row: "AAA_AA" if row['rating'] in ['AA', 'AAA'] else row['rating'], axis=1)
+        df['RatingBucket'] = df.apply(
+            lambda row: row['SectorM'] + row['Rating_c'] if row['SectorM'] == 'Corporate' else row['SectorM'], axis=1)
+
+        # Note: MVAI is accrued interest + price (TODO! can place into a calculations sheet if desired)
+        df['mvai'] = df['accruedinterest'] + df['price']
+
+        # c) Calculate term points based on maturity date (TODO! Can isolate float64 365.25 into global var SET_YEAR_LEN)
+        df['TermPt'] = df.apply(lambda row: round((row['maturitydate'] - self._given_date.date()).days / 365.25, 2),
+                                axis=1)  # TODO! As this is hardcoded, worthwhile putting the calculations on another page - for how we process the ftse data
+
+        # d) Bucket the bonds into six term buckets (conditions => maintainability - *Brenda*) # TODO! remove name
+        conditions = [
+            (df['TermPt'] < 5.75),
+            (df['TermPt'] < 10.75),
+            (df['TermPt'] < 15.75),
+            (df['TermPt'] < 20.75),
+            (df['TermPt'] < 27.75),
+            (df['TermPt'] < 35.25)
+        ]
+        choices = [1, 2, 3, 4, 5,
+                   6]  # TODO! Remove comment: # only non-mutating functions methods are for bond terms and curves, not even for ftse data as it manipulates it (!!)
+        # For TermPt >= 35.25, bucket = 0
+        df['bucket'] = np.select(conditions, choices,
+                                 default=0)  # TODO! Remove comment: # np.select() for vectorization (*Brenda* - these comments are removable)
+        self._data = df
+
+    def refresh_data(self):
+        """
+        Reloads FTSE bond data for the current date.
+        Notes:
+        ------
+        This method re-fetches and processes the data based on the current
+        `_given_date`, allowing users to refresh the data without modifying
+        the specified date.
+        """
+        self._load_data()
+
+    def update_date(self, new_date: datetime):
+        """
+        Updates the date and refreshes FTSE bond data.
+        Parameters:
+        ----------
+        new_date : datetime
+            The new date for which FTSE bond data should be retrieved.
+        Notes:
+        ------
+        This method sets a new date and automatically triggers data
+        re-processing by calling `refresh_data`.
+        """
+        self._given_date = new_date
+        self.refresh_data()
+
+
+"""Read in semi-annual bond curves from excel"""
+
+# ----- read in data -----
+from datetime import datetime
+from pathlib import Path
+from typing import Tuple
+
+
+def get_year_and_quarter(given_date: datetime) -> Tuple[str, int]:
+    """
+    Extracts the year and quarter from a given date.
+    Args:
+        given_date (datetime): The date to process.
     Returns:
-    Tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
-        - args: Parsed command-line arguments.
-        - GivenDate: The date for the optimization (current date if not provided).
-        - OU_Date: The over/under date for liabilities (defaults to GivenDate if not provided).
+        Tuple[str, int]: A tuple containing the year as a string
+                         and the quarter as an integer (1 to 4).
     """
-    parser = (argparse.ArgumentParser(description="The Model Portfolio takes our assets and liabilities,"
-                                                  "calculates asset sensitivities and performs an asset-liability"
-                                                  "matching optimization in Python (simple optimization), and the"
-                                                  "solutions from such is used to both generate hypothetical"
-                                                  "CFs and run benchmarks (Custom_benchmarking.xlsx) for the next quarter."))
-
-    # Step 1: Determine which files are outputted.
-    #   - Custom_benchmarking.xlsx is generated for benchmarking
-    #   - CFs.xlsx is cashflows file generated from solutions
-    #   - solutions.xlsx file is solutions file containing percentage allocations for our asset mix from optimization
-    #   - using asset KRD profiles (accounts for interest rate fluctuation by modelling 1bp shocks every several years), liabilities to hedge liabilities risk of our assets  # TODO! can fix for more concision
-    """debugging"""
-    #parser.add_argument("-bench", "--create_benchmarking_tables", action='store_true', help="Include to generate output for benchmarking [Custom_benchmarking.xlsx], or leave both blank to do both alongside regular solutions file.")
-    #parser.add_argument("-cf", "--create_solution_cashflows", action='store_true', help="Include to generate output for solution cashflows [CFs.xlsx], or leave both blank to do both alongside regular solutions file.")
-
-    # Step 2: Consider if debugging steps are ran.
-    #parser.add_argument("-nodebug", "--no_debugger_outputs", action='store_true', help="Include to not generate debugging steps [/Debugging Steps/CFs.xlsx], or leave blank to opt in by default.")
-    """debugging"""
-    # Part 1: (description="Portfolio Optimization Tool")
-
-    # Required arguments: date for which quarter is ran:
-    parser.add_argument("-d", "--GivenDate", type=str, help="Use YYYY-MM-DD to set the Date for the calculation.")
-    parser.add_argument("-o", "--OU_Date", type=str, help="Use YYYY-MM-DD to use specific over_under_assetting file") # This variable is never needed, read, or used for any function - ask Mitchell Waters if needed for any function.
-    # parser.add_argument('-c', '--create', action='store_true',
-    #                     help='Include this if the liabilities for the selected date have not yet been uploaded to the db')
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    return year, quarter
 
 
-    # Optional for specific outputs (mortgages, publics, privates)
-    parser.add_argument("-m", "--mortgage", action='store_true',
-                        help="Include to generate output for mortgages, or leave all 3 blank to do all 3")
-    parser.add_argument("-pb", "--public", action='store_true',
-                        help="Include to generate output for publics, or leave all 3 blank to do all 3")
-    parser.add_argument("-pv", "--private", action='store_true',
-                        help="Include to generate output for privates, or leave all 3 blank to do all 3")
+def set_input_path(given_date: datetime, file_name: str) -> Path:
+    """
+    Constructs a file path based on the given date, creating the
+    necessary directory structure if it does not exist.
+    Args:
+        given_date (datetime): The date used to determine the folder structure.
+        file_name (str): The name of the file to include in the path.
+    Returns:
+        Path: The full path to the file, including the directory structure.
+    """
 
-    # Part 2: (description="Benchmark Creation Tool")
+    # Determine year and quarter
+    year, quarter = get_year_and_quarter(given_date)
 
-    # Used for Custom_benchmarks, potentially. Not necessary for solutions files, and never are the following required.
-    parser.add_argument('-s', '--swap', action='store_true',
-                        help="Set to true if interest rate swap sensitivities are backed out")
-    parser.add_argument('-cb', '--curMonthBS', action='store_true',
-                        help='include to run economics with current month balance sheet instead of previous')
-    parser.add_argument("-j", "--jobname", type=str, default="UNSPECIFIED",
-                        help="Specified Jobname")
+    # Make directory path
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, f"Q{quarter}")
+    os.makedirs(dir_path, exist_ok=True)
 
-    # Parse arguments:
-    args = parser.parse_args()
+    # Make file path
+    path_input = os.path.join(dir_path,
+                              file_name)
 
-    # Date conversion and defaults to GivenDate:
-    if args.GivenDate is None:
-        GivenDate = dt.datetime.now()
-    else:
-        GivenDate = conversions.YYYYMMDDtoDateTime(args.GivenDate)
+    # Return the full file path
+    return path_input
 
-    if args.OU_Date is None:
-        OU_Date = conversions.YYYYMMDDtoDateTime(args.GivenDate)
-    else:
-        OU_Date = conversions.YYYYMMDDtoDateTime(args.OU_Date)
 
-    return args, GivenDate, OU_Date
+def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
+    """
+    Returns a dataframe of semi-annual bond curves.
+    """
+    # Set file name and path, and sheet name
+    file_name = "Curves.xlsx"
+    path_input = set_input_path(GivenDate, file_name)
 
+    sheet = 'Curves'
+    # Load workbook, open sheet, read data values
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+
+    # Read columns
+    columns = next(data)[0:]
+
+    # Set columns as columns of first row
+    df = pd.DataFrame(data, columns=columns)
+
+    # Set index as buckets
+    df.set_index(df.columns[0], inplace=True)
+    df.index.name = 'Term Bucket'
+
+    return df
