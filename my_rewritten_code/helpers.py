@@ -52,6 +52,55 @@ def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
 
 # For Model Portfolio code:
 
+
+def read_specific_solutions(excel_file_path: str) -> dict:
+    """
+    Reads the 'public_solution', 'mortgage_solution', and 'private_solution' sheets
+    from the provided Excel workbook. Returns a dictionary mapping sheet names to DataFrames.
+    Parameters
+    ----------
+    excel_file_path : str
+        The full path to the Excel file containing the required sheets.
+    Returns
+    -------
+    dict
+        A dictionary with keys 'public_solution', 'mortgage_solution', 'private_solution',
+        and values as the corresponding Pandas DataFrames.
+    Raises
+    ------
+    FileNotFoundError
+        If the specified Excel file does not exist or is unreadable.
+    ValueError
+        If one or more of the required sheets are missing from the workbook.
+    Examples
+    --------
+    >>> dfs = read_specific_solutions("path/to/data_solutions.xlsx")
+    >>> public_df = dfs["public_solution"]
+    >>> mortgage_df = dfs["mortgage_solution"]
+    >>> private_df = dfs["private_solution"]
+    """
+    required_sheets = ["public_solution", "mortgage_solution", "private_solution"]
+    # First, we verify that the file can be opened and the required sheets exist.
+    try:
+        excel_obj = pd.ExcelFile(excel_file_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Could not find or open the Excel file at: {excel_file_path}")
+    except Exception as e:
+        raise ValueError(f"An error occurred while reading the Excel file: {e}")
+    missing_sheets = [sheet for sheet in required_sheets if sheet not in excel_obj.sheet_names]
+    if missing_sheets:
+        raise ValueError(
+            f"The following required sheets are missing from {excel_file_path}: {missing_sheets}"
+        )
+    # Read the three sheets into a dictionary of DataFrames.
+    solutions = {}
+    for sheet in required_sheets:
+        df = pd.read_excel(excel_file_path, sheet_name=sheet, index_col=0)
+        asset_type_name = sheet.replace("_solution", "")
+        solutions[asset_type_name] = df
+    return solutions
+
+
 # Generalized function for optimization
 def process_asset_type(asset_type, KRDs, GivenDate):
     misc.log(f"Optimizing {asset_type}", LOGFILE)

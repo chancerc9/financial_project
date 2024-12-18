@@ -4,29 +4,18 @@
     to a database. 
 """
 # Standard library imports
-import argparse
 import datetime as dt
-import json
 import os
 import sys
-import traceback
-from collections import OrderedDict
-from typing import Dict
 
 # Third-party imports
 import numpy as np
-import openpyxl
 import pandas as pd
-from dateutil.relativedelta import relativedelta
-from psycopg2.extras import DictCursor
-from scipy.optimize import minimize
-
 # Local application-specific imports
-from equitable.chronos import offsets, conversions
-from equitable.db.db_functions import execute_table_query
 from equitable.db.psyw import SmartDB
-from equitable.infrastructure import sysenv, jobs, sendemail
+from equitable.infrastructure import sysenv
 from equitable.utils import processtools as misc
+from scipy.optimize import minimize
 
 # Adding system path for custom imports
 sys.path.append(sysenv.get("ALM_DIR"))
@@ -39,21 +28,20 @@ import file_utils as file_utils
 pd.set_option('display.width', 150)
 
 # Database connections (Benchmark, Bond, and General)
-BM_conn = SmartDB('Benchmark')
-BM_cur = BM_conn.con.cursor()
+# BM_conn = SmartDB('Benchmark')
+#BM_cur = BM_conn.con.cursor()
 
-Bond_conn = SmartDB('Bond')
-Bond_cur = Bond_conn.con.cursor()
+#Bond_conn = SmartDB('Bond')
+#Bond_cur = Bond_conn.con.cursor()
 
-General_conn = SmartDB('General')
-General_cur = General_conn.con.cursor()
+#General_conn = SmartDB('General')
+#General_cur = General_conn.con.cursor()
 
 # Logging directories:
 MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
 os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
 LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
                'a')  # Append to the existing logfile, or create a new one
-
 
 ## Start of Model Portfolio code: ##
 
@@ -65,7 +53,10 @@ Side effects:
 - this function does *not* mutate/alter/change the original bond_curves dataframe reference, nor any further changes to replicates.
 
 """
-def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame, GivenDate: pd.Timestamp) -> pd.DataFrame:
+
+
+def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
+                       GivenDate: pd.Timestamp) -> pd.DataFrame:
     """
     Creates the Key Rate Duration (KRD) table for assets on a given date.
     (Main method to create the KRD table for assets.)
@@ -86,12 +77,16 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
     """
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables; makes a weight table for the 6 buckets (to 6 buckets, from the 70 buckets cfs)
-    weights, totals = helpers.create_weight_tables(ftse_data)  # Makes a weight table that holds weights for each bond rating and bucket
+    weights, totals = helpers.create_weight_tables(
+        ftse_data)  # Makes a weight table that holds weights for each bond rating and bucket
 
-    cf_tables = helpers.create_cf_tables(ftse_data)            # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100.
-    shock_tables = helpers.create_shock_tables(const_bond_curves, GivenDate)    # Makes 30 year up and down shock tables for each bond rating and bucket.
-    sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables)  # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
-                                                                                # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
+    cf_tables = helpers.create_cf_tables(
+        ftse_data)  # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100.
+    shock_tables = helpers.create_shock_tables(const_bond_curves,
+                                               GivenDate)  # Makes 30 year up and down shock tables for each bond rating and bucket.
+    sensitivities = helpers.create_sensitivity_tables(cf_tables,
+                                                      shock_tables)  # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
+    # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
     # Create directories for storing the results
     cur_date = GivenDate.strftime('%Y%m%d')
     path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
@@ -106,7 +101,8 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
                 sensitivities[rating].to_excel(writer)  # 70 buckets?
 
     # Calculate and return the overall KRD table (6 buckets)
-    df = helpers.make_krd_table(weights, sensitivities)  # Sensitivities are in 70 ttm buckets * 10 KRD shock intervals (terms) (TODO: !)
+    df = helpers.make_krd_table(weights,
+                                sensitivities)  # Sensitivities are in 70 ttm buckets * 10 KRD shock intervals (terms) (TODO: !)
     df['rating'] = df['rating'].replace({
         'CorporateBBB': 'corporateBBB',
         'CorporateA': 'corporateA',
@@ -121,21 +117,20 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
                                        'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
     os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
     file_utils.write_results_to_excel(const_bond_curves, CURR_DEBUGGING_PATH, cur_date,
-                           'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
-
+                                      'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
 
     # Creates weight tables for each bond rating based on subindex percentages (for bonds):
     file_utils.write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date,
-                           'bond_weights_per_rating_for_6_buckets')  # Weighting to make 70 buckets into 6 buckets
+                                      'bond_weights_per_rating_for_6_buckets')  # Weighting to make 70 buckets into 6 buckets
     file_utils.write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date,
-                           'total_universe_weights')
+                                      'total_universe_weights')
 
     # Shocked curves table:
     file_utils.write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
 
     # KRD table:
     file_utils.write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date,
-                                     'final_krd_table')
+                                                'final_krd_table')
 
     # cf tables based on ftse data:
     file_utils.write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
@@ -145,12 +140,16 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
     """
     return df
 
+
 """
 Mutates: Nothing
 Helper that reading_asset_KRDs(ftse_data, GivenDate) relies on.
 """
+
+
 # Should be called: create asset_mix
-def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple[
+    pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Reads in asset segments and creates an asset table to use later for liabilities.
 
@@ -169,7 +168,7 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
     # 1 for segments, 0 for totals
     totals = helpers.BSTotals(Given_date, sheet_version)
 
-    weights = helpers.percents( # gets weighting for each asset mix
+    weights = helpers.percents(  # gets weighting for each asset mix
         Given_date)  # weights for total is same as weights for everything else, maybe that's where the problem shows - see weights in hardcoded.xlsx (OR)
     weights = weights[['ACCUM', 'PAYOUT', 'UNIVERSAL', 'NONPAR', 'GROUP', 'PARCSM', 'Total', 'Surplus', 'SEGFUNDS']]
     weights = weights.dropna(axis=1, how='all')  # Remove columns with all NaNs (* inefficient *)
@@ -191,7 +190,7 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
                      inplace=True)
 
     # .drop() explicitly creates a new df, hence, avoiding ambiguity or warnings for/from Pandas
-    df_private = df.iloc[5:11].drop(columns=['SEGFUNDS']) # Mortgages are modelled from privates
+    df_private = df.iloc[5:11].drop(columns=['SEGFUNDS'])  # Mortgages are modelled from privates
 
     #  Privates are modelled with CorpA and CorpAAA bonds (considering our private assets are not existing in FTSE universe):
     df_private.rename({'PrivateAA': 'CorporateAAA_AA', 'PrivateA': 'CorporateA', 'PrivateBBB': 'CorporateBBB',
@@ -207,25 +206,28 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
     return df_public, df_private, df_mortgages
 
 
-
 """
 Functions that *may* mutate things.
 """
-def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type='public', sheet_version=1):
 
+
+def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type='public', sheet_version=1):
     KRDs = AssetKRDsTable.copy()
 
     df_public, df_private, df_mortgages = reading_asset_mix(given_date, sheet_version)
 
     ''' Setting Asset_mix to the correct table based on the given asset class '''
     if asset_type == 'private':
-        Asset_mix = df_private.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
+        Asset_mix = df_private.rename(
+            {'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
 
     elif asset_type == 'mortgage':
-        Asset_mix = df_mortgages.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
+        Asset_mix = df_mortgages.rename(
+            {'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
 
     else:
-        Asset_mix = df_public.rename({'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
+        Asset_mix = df_public.rename(
+            {'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
 
     # Reads in targets sensitivities to match sols:
     ''' Separating the db values into 3 tables, one for each asset class '''
@@ -357,7 +359,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
                     bond_krd = bond_krd.reset_index().drop(bond_krd.columns[[0, 1]], axis=1).drop('index',
                                                                                                   axis=1).to_numpy()
 
-                    ''' Getting the solved weights from solution_df ''' # TODO! could have issue, solved weights is wrong, step that matters
+                    ''' Getting the solved weights from solution_df '''  # TODO! could have issue, solved weights is wrong, step that matters
                     weights = solution_df.loc[
                         (solution_df['portfolio'] == 'Total') & (solution_df['rating'] == bond_rating)].drop(
                         columns={'portfolio', 'rating'}).to_numpy().reshape(-1, 1)
@@ -443,7 +445,6 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
             else:
                 bnds = [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]]
 
-
             if portfolio == 'Total':
                 ''' Uses a different x0 because [0, 0, 0, 0, 0, 1] is sometimes out of bounds and it gives an incorrect solution '''
                 sumofbnds = 1 - bnds[0][0] - bnds[1][0] - bnds[2][0] - bnds[3][0] - bnds[4][0] - bnds[5][0]
@@ -475,7 +476,7 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
     solution_df = pd.concat([solution_df, surplus_table], ignore_index=True)
 
     ''' Rounds the solution to 4 decimals'''
-    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(5) # 4
+    solution_df.iloc[:, :6] = solution_df.iloc[:, :6].astype(float).round(5)  # 4
 
     return solution_df
 
@@ -491,9 +492,9 @@ def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public'):
     # Does NOT modify the reference of KRDs.
 
     # Segments:
-    sol_df_seg = optimization_worker(KRDs, given_date, asset_type, sheet_version=1) # segments = 1
+    sol_df_seg = optimization_worker(KRDs, given_date, asset_type, sheet_version=1)  # segments = 1
     # Totals:
-    sol_df_tot = optimization_worker(KRDs, given_date, asset_type, sheet_version=0) # totals = 0
+    sol_df_tot = optimization_worker(KRDs, given_date, asset_type, sheet_version=0)  # totals = 0
 
     def overwrite_total_rows(sol_df_seg, sol_df_tot):
         """
@@ -538,12 +539,12 @@ def debug():
     semi_annual_bond_curves = datahandler.get_bond_curves(GivenDate)
 
     shock_tables_new = helpers.create_shock_tables(semi_annual_bond_curves,
-                                               GivenDate)
+                                                   GivenDate)
 
     shock_tables_old = helpers.create_shock_tables_and_interpolate_bond_curves(annual_bond_curves,
-                                               GivenDate)
+                                                                               GivenDate)
 
-    #for key, value in shock_tables_old:
+    # for key, value in shock_tables_old:
     #    bool = shock_tables_new[key].equals(shock_tables_old)
     #    print(bool)
 
@@ -562,7 +563,7 @@ def debug():
     # 2. Get cashflows
 
     # 3. Get KRDs from cashflows - Gets info using copy of ftse data
-    #KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data,
+    # KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data,
     #                                          GivenDate)  # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
 
 

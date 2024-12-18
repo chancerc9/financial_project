@@ -10,33 +10,22 @@ Side effects:
 """
 
 # Standard library imports
-import argparse
 import datetime as datetime
-import json
 import os
 import sys
-from collections import OrderedDict
-from typing import Dict, Any
+from typing import Any
 
 # Third-party library imports
 import numpy as np
 import openpyxl
 import pandas as pd
-import psycopg2
-from dateutil.relativedelta import relativedelta
-from psycopg2.extras import DictCursor
-from scipy import interpolate
-from scipy.optimize import minimize
-
 # Project-specific imports
-from equitable.chronos import conversions, offsets
-from equitable.db.db_functions import execute_table_query
 from equitable.db.psyw import SmartDB
-from equitable.infrastructure import jobs, sendemail, sysenv
+from equitable.infrastructure import sysenv
+from scipy import interpolate
 
 # Required custom modules
 import file_utils
-import solutions as mp
 
 # Pandas configuration
 pd.set_option('display.width', 150)

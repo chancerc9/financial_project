@@ -8,7 +8,6 @@ Functions:
 Side effects:
 
 """
-from Web_flask.web_flask.utility.template_filters import datetime
 
 """
     This provided code is a complex script that processes bond-related data, 
@@ -21,6 +20,7 @@ from Web_flask.web_flask.utility.template_filters import datetime
 # Standard library imports
 import os
 import sys
+import datetime
 
 # Third-party imports
 import pandas as pd
@@ -36,52 +36,12 @@ sys.path.append(sysenv.get("ALM_DIR"))
 import solutions as model_portfolio
 import cashflows_and_benchmark_tables
 import cli
-import datahandler as datahandler
+import datahandler
 import file_utils
 import helpers
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
-
-# Database connections (Benchmark, Bond, and General)
-#BM_conn = SmartDB('Benchmark')
-#BM_cur = BM_conn.con.cursor()
-
-#Bond_conn = SmartDB('Bond')
-#Bond_cur = Bond_conn.con.cursor()
-
-#General_conn = SmartDB('General')
-#General_cur = General_conn.con.cursor()
-
-# Logging directories:
-MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
-LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
-               'a')  # Append to the existing logfile, or create a new one
-
-import os
-from typing import Union
-
-import os
-from typing import Union
-
-
-def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
-    """
-    Constructs a directory path from the given segments and ensures that the directory exists.
-    If the directory does not exist, it will be created. If it already exists, no error is raised.
-    Parameters:
-    path_segments (str or bytes): The parts that form the directory path. This can be passed as
-                                  multiple string arguments or a tuple of strings.
-    Returns:
-    str: The full, absolute path of the directory.
-    Example:
-        build_and_ensure_directory('some', 'nested', 'directory')
-        # Ensures 'some/nested/directory' exists and returns that path.
-    """
-    directory_path = os.path.join(*path_segments)
-    os.makedirs(directory_path, exist_ok=True)
-    return directory_path
 
 
 def main():  # model_portfolio.py new version
@@ -101,7 +61,7 @@ def main():  # model_portfolio.py new version
     args, GivenDate = cli.get_user_info()   # retrieves user input for the program
     # GivenDate in string form:
     cur_date: str = GivenDate.strftime('%Y%m%d')    # current date
-    timestamp: str = datetime.now().strftime("%Y%m%d-%H%M%S")   # time as of now
+    timestamp: str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")   # time as of now
 
 
     # Ensure input-output directories exist:
@@ -123,17 +83,16 @@ def main():  # model_portfolio.py new version
     custom_benchmarks_path = SOLUTIONS_DIR + '/Custom_benchmark_' + cur_date + '.xlsx'
     cfs_path = SOLUTIONS_DIR + '/CFs' + cur_date + '.xlsx'
 
-    
-    # Define Results Directory (output):
-    output_directory: str = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                        'benchmarking_outputs',
-                                        'Brenda', cur_date)
-    os.makedirs(output_directory, exist_ok=True)
 
-    # Define Debugging_Steps Directory (debugging outputs):
-    DEBUGGING_DIRECTORY = os.path.join(output_directory, 'Debugging_Steps')
-    os.makedirs(DEBUGGING_DIRECTORY, exist_ok=True)
+    # Logging directory and LOGFILE (for basic logs):
+    #MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'model_portfolio')
+    # os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
+    # LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
+    #               'a')  # Append to the existing logfile, or create a new one
 
+    MY_LOG_DIR: str = helpers.build_and_ensure_directory(base_dir, 'logs', 'model_portfolio')
+    LOGFILE = open(os.path.join(MY_LOG_DIR, 'model_portfolio_code_log.txt'),
+                   'a')  # Append to the existing logfile, or create a new one
 
     # ----- B: Run Model Portfolio (Main code + logging): ------
     try:
@@ -145,9 +104,7 @@ def main():  # model_portfolio.py new version
         print('Begin Process: Read-in data from database and set user input')
 
         # 1.1) Retrieve semiannual bond curve data across 35 years.
-        bond_curves = datahandler.get_bond_curves(
-            GivenDate)  # old code: annual_bond_curves = datahandler.get_bond_curves_query(GivenDate)  # Query to retrieve annual bond curve data (annual curve data for 35 years)
-        #           original_KRDs = model_portfolio.reading_asset_KRDs_with_annual_bond_curves(annual_bond_curves, ftse_handler.data, GivenDate)    # Generate KRD Table for all assets (to feed to optim function and write later; keep in memory or write now)
+        bond_curves = datahandler.get_bond_curves(GivenDate)
 
         # 1.2) Retrieve FTSE Universe data from database query:
         ftse_handler = datahandler.FTSEDataHandler(GivenDate)  # Initialize FTSEDataHandler for GivenDate.
@@ -202,20 +159,44 @@ def main():  # model_portfolio.py new version
         # print("Optimizing solutions")
         # misc.log('Optimizing solutions', LOGFILE)
 
-        # Process only the specified conditions
-        for asset_type, condition in mask.items():
-            if condition:
-                solutions[asset_type] = helpers.process_asset_type(asset_type, KRDs, GivenDate)
-                """
-                misc.log(f"Optimizing {asset_type}", LOGFILE)
-                solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)
-                print(f"Successfully optimized: {asset_type}")
-                """
-        print("Successfully ran: solutions")
-        # misc.log("Successfully ran: solutions", LOGFILE)
+        if args.read_in_solutions_file:
+            print("Reading in solutions file:")
 
-        # Write solutions to Excel
-        helpers.write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate)
+            # Solutions file name to feed into the code:
+            existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
+            # existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
+
+            # retrieve solutions file path:
+            solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
+
+            excel_path = solutions_path
+
+            try:
+                dataframes_dict = helpers.read_specific_solutions(excel_path)
+                # At this point, dataframes_dict contains the three DataFrames keyed by their sheet names.
+                # You may proceed with further analysis or transformations here.
+            except Exception as err:
+                # Handle the error as appropriate for your environment—logging, re-raising, etc.
+                print(f"Error encountered: {err}")
+
+            solutions = dataframes_dict
+
+        else:
+            # Process only the specified conditions
+            for asset_type, condition in mask.items():
+                if condition:
+                    solutions[asset_type] = helpers.process_asset_type(asset_type, KRDs, GivenDate)
+                    """
+                    misc.log(f"Optimizing {asset_type}", LOGFILE)
+                    solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)
+                    print(f"Successfully optimized: {asset_type}")
+                    """
+            print("Successfully ran: solutions")
+            # misc.log("Successfully ran: solutions", LOGFILE)
+
+            # Write solutions to Excel
+            helpers.write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate)
+
 
         # misc.log("Creating Custom_benchmark.xlsx", LOGFILE)
         print("Creating Custom_benchmark.xlsx")
@@ -297,22 +278,4 @@ def main():  # model_portfolio.py new version
 if __name__ == "__main__":
     main()
 
-""" Changelog Brenda (09-30-24):
-    I've now modified it to generate KRDs and hold them to pass down in memory rather than generate new KRDs during 
-    each sector's back-to-back optimization.
 
-    Considering, optimization and writing KRD solutions to excel file happen back-to-back hence most of stack memory
-    holds it concurrently anyways.
-
-    They are the same KRD profiles tables to write to excel in the very end, and used for every type of liability optimization. 
-    Since, we have
-        asset KRD profiles + list(liability segments)
-    for optimization.
-"""
-
-"""
-if copied.equals(KRDs):
-    print("No changes were made to KRDs data")
-else:
-    print("The data has been modified")
-"""

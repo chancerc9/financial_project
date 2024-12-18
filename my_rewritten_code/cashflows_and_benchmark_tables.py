@@ -10,29 +10,15 @@ Functions:
 Side effects:
 
 """
-import json
-from scipy.optimize import minimize
 import os
-import sys
-import numpy as np
-from dateutil.relativedelta import relativedelta
-from equitable.db.db_functions import execute_table_query
-import traceback
+
 import pandas as pd
 
 # from benchmarking.helpers_test_2 import create_shock_tables
 
 pd.set_option('display.width', 150)
-import datetime as dt
-from collections import OrderedDict
-import openpyxl
-import argparse
-from equitable.infrastructure import sysenv, jobs, sendemail
-from equitable.chronos import offsets, conversions
+from equitable.infrastructure import sysenv
 from equitable.db.psyw import SmartDB
-from psycopg2.extras import DictCursor
-
-
 
 import calculations as helpers
 import solutions as bench
@@ -469,7 +455,7 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
         summed_cfs = pd.concat([carry_table, summed_cfs.set_index('date')])
 
         # Store results in the final output dictionary
-        summed_cfs_dict[portfolio] = summed_cfs.fillna(0)
+        summed_cfs_dict[portfolio] = summed_cfs.fillna(0).infer_objects(copy=False)
 
     return summed_cfs_dict
 
@@ -572,23 +558,3 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
     return ftse_data
 
 
-def main_test():
-
-    args, GivenDate, OU_Date = parse_args.get_user_info()
-
-    ftse_data = helpers.get_ftse_data(GivenDate)
-
-    weights, totals = helpers.create_weight_tables(ftse_data)
-    #print(weights.shape)
-
-    cashflows_granular = helpers.create_cf_tables(ftse_data)
-    #print(cashflows_granular.shape)
-
-    # bool = df_mortgages_old.equals(df_mortgages)
-
-
-if __name__ == "__main__":
-    main_test()
-    # testing
-    #import doctest
-    #doctest.testmod()
