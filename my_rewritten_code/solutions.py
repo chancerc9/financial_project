@@ -23,6 +23,7 @@ sys.path.append(sysenv.get("ALM_DIR"))
 import calculations as helpers
 import file_utils as file_utils
 import datahandler
+import helpers as function_helpers
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
@@ -40,7 +41,7 @@ Side effects:
 
 
 def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
-                       GivenDate: pd.Timestamp) -> pd.DataFrame:
+                       GivenDate: pd.Timestamp, debug=False) -> pd.DataFrame:
     """
     Creates the Key Rate Duration (KRD) table for assets on a given date.
     (Main method to create the KRD table for assets.)
@@ -61,32 +62,40 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
     """
 
     # Create weight tables, cashflow tables, shock tables, and sensitivity tables; makes a weight table for the 6 buckets (to 6 buckets, from the 70 buckets cfs)
-    weights, totals = helpers.create_weight_tables(
-        ftse_data)  # Makes a weight table that holds weights for each bond rating and bucket
+    weights, totals = helpers.create_weight_tables(ftse_data)  # Makes a weight table that holds weights for each bond rating and bucket
+    cf_tables = helpers.create_cf_tables(ftse_data)  # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100.
+    shock_tables = helpers.create_shock_tables(const_bond_curves, GivenDate)    # Makes 30 year up and down shock tables for each bond rating and bucket.
+    sensitivities = helpers.create_sensitivity_tables(cf_tables, shock_tables)  # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
+                                                                                # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
 
-    cf_tables = helpers.create_cf_tables(
-        ftse_data)  # Makes a 30-35 year average semi-annual cashflow table for each bond rating and bucket, with principal 100.
-    shock_tables = helpers.create_shock_tables(const_bond_curves,
-                                               GivenDate)  # Makes 30 year up and down shock tables for each bond rating and bucket.
-    sensitivities = helpers.create_sensitivity_tables(cf_tables,
-                                                      shock_tables)  # Uses shocks and cashflows to make 30 year sensitivity tables for each bond rating and bucket
-    # sensitivities = target sensitivities when still in 70 buckets - use this and weights to make final KRD tables (same thing but 6 buckets)
     # Create directories for storing the results
-    cur_date = GivenDate.strftime('%Y%m%d')
-    path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                        'Brenda', 'sensitivities', cur_date)
-    os.makedirs(path, exist_ok=True)
 
-    # Save sensitivity tables as Excel files for each rating
-    for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
-        file_path = os.path.join(path, f'{rating}_sensitivities_{cur_date}.xlsx')
-        if not os.path.exists(file_path):
-            with pd.ExcelWriter(file_path) as writer:
-                sensitivities[rating].to_excel(writer)  # 70 buckets?
+    cur_date = GivenDate.strftime('%Y%m%d')
+
+    # Output directory for debugging files:
+    CURR_DEBUGGING_PATH: str = function_helpers.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'),
+                                                                  'Benchmarking', 'code_benchmarking_outputs',
+                                                                  cur_date, 'debugging_steps')
+
+    if debug:
+        # Output directory for debugging files:
+
+        path: str = function_helpers.build_and_ensure_directory(CURR_DEBUGGING_PATH, 'sensitivities')
+
+        #path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
+        #                    'Brenda', 'sensitivities', cur_date)
+        #os.makedirs(path, exist_ok=True)
+
+        # Save sensitivity tables as Excel files for each rating
+        for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
+            file_path = os.path.join(path, f'{rating}_sensitivities_{cur_date}.xlsx')
+            if not os.path.exists(file_path):
+                with pd.ExcelWriter(file_path) as writer:
+                    sensitivities[rating].to_excel(writer)  # 70 buckets?
 
     # Calculate and return the overall KRD table (6 buckets)
     df = helpers.make_krd_table(weights,
-                                sensitivities)  # Sensitivities are in 70 ttm buckets * 10 KRD shock intervals (terms) (TODO: !)
+                                sensitivities)  # Sensitivities are in 70 ttm buckets * 10 KRD shock intervals (terms)
     df['rating'] = df['rating'].replace({
         'CorporateBBB': 'corporateBBB',
         'CorporateA': 'corporateA',
@@ -96,28 +105,36 @@ def reading_asset_KRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
     """
     Method for debugging:
     """
+    # Ensure input-output directories exist:
 
-    CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                       'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
-    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
-    file_utils.write_results_to_excel(const_bond_curves, CURR_DEBUGGING_PATH, cur_date,
-                                      'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
+    # Output directory for debugging files:
+    #CURR_DEBUGGING_PATH: str = helpers.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'code_benchmarking_outputs',
+    #                                                           cur_date, 'debugging_steps')
 
-    # Creates weight tables for each bond rating based on subindex percentages (for bonds):
-    file_utils.write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date,
-                                      'bond_weights_per_rating_for_6_buckets')  # Weighting to make 70 buckets into 6 buckets
-    file_utils.write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date,
-                                      'total_universe_weights')
 
-    # Shocked curves table:
-    file_utils.write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
+    #CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
+    #                                   'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
+    #os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
 
-    # KRD table:
-    file_utils.write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date,
-                                                'final_krd_table')
+    if debug:
+        file_utils.write_results_to_excel(const_bond_curves, CURR_DEBUGGING_PATH, cur_date,
+                                          'ftse_bond_curves_annual')  # unneeded, or can make into semiannual
 
-    # cf tables based on ftse data:
-    file_utils.write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
+        # Creates weight tables for each bond rating based on subindex percentages (for bonds):
+        file_utils.write_results_to_excel(weights, CURR_DEBUGGING_PATH, cur_date,
+                                          'bond_weights_per_rating_for_6_buckets')  # Weighting to make 70 buckets into 6 buckets
+        file_utils.write_results_to_excel(totals, CURR_DEBUGGING_PATH, cur_date,
+                                          'total_universe_weights')
+
+        # Shocked curves table:
+        file_utils.write_results_to_excel(shock_tables, CURR_DEBUGGING_PATH, cur_date, 'shocked_bond_curves')
+
+        # KRD table:
+        file_utils.write_results_to_excel_one_sheet(df, CURR_DEBUGGING_PATH, cur_date,
+                                                    'final_krd_table')
+
+        # cf tables based on ftse data:
+        file_utils.write_results_to_excel(cf_tables, CURR_DEBUGGING_PATH, cur_date, 'cf_tables_ftse_data')
 
     """
     End of method for debugging
@@ -198,6 +215,7 @@ Functions that *may* mutate things.
 def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, asset_type='public', sheet_version=1):
     KRDs = AssetKRDsTable.copy()
 
+    # Assets
     df_public, df_private, df_mortgages = reading_asset_mix(given_date, sheet_version)
 
     ''' Setting Asset_mix to the correct table based on the given asset class '''

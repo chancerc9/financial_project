@@ -163,6 +163,7 @@ The function aggregates per portfolio and rating.
     portfolio_tuple = ('NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'SURPLUS', 'TOTAL')
     rating_tuple = ('Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB')
 
+    cur_date = given_date.strftime('%Y%m%d')
 
     def write_debug_file(df, name, subdir='benchmarking_tables'):
         if debug:
@@ -170,7 +171,6 @@ The function aggregates per portfolio and rating.
             cur_date_str = given_date.strftime('%Y%m%d')
             path = helper_function.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
                                 'Brenda', subdir, cur_date_str)
-            os.makedirs(path, exist_ok=True)
             file_path = os.path.join(path, f'{name}_{cur_date_str}.xlsx')
             if not os.path.exists(file_path):
                 with pd.ExcelWriter(file_path) as writer:
@@ -229,18 +229,22 @@ The function aggregates per portfolio and rating.
             # print(pv_array)
 
             # write to excel
-            cur_date = given_date.strftime('%Y%m%d')
-            path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                                'Brenda', 'pv_actuals', cur_date)
-            os.makedirs(path, exist_ok=True)
+            if debug: # change the function to convert it to vector, else, take out the if debug within function
 
-            pv_array_df = pd.DataFrame(pv_array)
+                file_name = f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx'
 
-            # """temp comment out
-            file_path = os.path.join(path, f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx')
-            if not os.path.exists(file_path):
-                with pd.ExcelWriter(file_path) as writer:
-                    pv_array_df.to_excel(writer, sheet_name='Sheet1', index=False)  # Rows are payments, cols are buckets
+                subdir = 'benchmarking_outputs'
+
+                pv_array_df = pd.DataFrame(pv_array)
+                write_debug_file(pv_array_df, file_name, subdir)
+
+
+
+                # """temp comment out
+                #file_path = os.path.join(path, f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx')
+                #if not os.path.exists(file_path):
+                #    with pd.ExcelWriter(file_path) as writer:
+                #        pv_array_df.to_excel(writer, sheet_name='Sheet1', index=False)  # Rows are payments, cols are buckets
             # """
             # end of write to excel
 
@@ -286,20 +290,24 @@ The function aggregates per portfolio and rating.
             # Cashflows in 6 buckets divided by PV
             cfs_aggregated_6_buckets = np.nan_to_num(cfs_condensed_numpy, nan=0.0) # Shape: (time: 70, buckets: 6) for (row, col)
 
+            if debug:
+                # 4. Print or write to excel for PV adjusted CFs aggregated in 6 buckets
+                debug_df = pd.DataFrame(cfs_aggregated_6_buckets)
 
-            # 4. Print or write to excel for PV adjusted CFs aggregated in 6 buckets
-            cfs_condensed_df = pd.DataFrame(cfs_aggregated_6_buckets)
+                file_name = f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx'
+                subdir = 'benchmarking_outputs'
 
-            cur_date = given_date.strftime('%Y%m%d')
-            path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                                'Brenda', 'benchmarking_tables', cur_date)
-            os.makedirs(path, exist_ok=True)
+                write_debug_file(debug_df, file_name, subdir) # but anyway, reduce functionality for function is good
 
-            #"""temp comment out
-            file_path = os.path.join(path, f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx')
-            if not os.path.exists(file_path):
-                with pd.ExcelWriter(file_path) as writer:
-                    cfs_condensed_df.to_excel(writer, sheet_name='Sheet1', index=False)   # Rows are payments, cols are buckets
+                #path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
+                #                    'Brenda', 'benchmarking_tables', cur_date)
+                #os.makedirs(path, exist_ok=True)
+
+                #"""temp comment out
+                #file_path = os.path.join(path, f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx')
+                #if not os.path.exists(file_path):
+                #    with pd.ExcelWriter(file_path) as writer:
+                #        cfs_condensed_df.to_excel(writer, sheet_name='Sheet1', index=False)   # Rows are payments, cols are buckets
             #"""
             # 5. Perform a SUMPRODUCT of matrix and solutions on correct dimensions
 

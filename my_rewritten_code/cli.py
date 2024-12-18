@@ -44,11 +44,11 @@ def get_user_info() -> tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
 
     # for debugging, if desired
     parser.add_argument('-debug', '--debug', action='store_true',
-                        help='debugging files')
+                        help='Include to generate intermediary steps, i.e. debugging files')
 
     # Use previous solutions file, as desired.
     parser.add_argument('-use_solutions', '--read_in_solutions_file', action='store_true',
-                        help='use previous solutions file')
+                        help='Include to use the existing solutions file in Inputs folder rather generating its own')
 
     # Optional for specific outputs (mortgages, publics, privates)
     parser.add_argument("-m", "--mortgage", action='store_true',

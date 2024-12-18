@@ -141,7 +141,7 @@ def main():  # model_portfolio.py new version
 
         # 2.1. Create 70 bucket cashflows from a copy of FTSE data and create 6 bucket KRDs from cashflows:
         KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data,
-                                                  GivenDate)  # sensitivities variable is 70 bucket KRDs
+                                                  GivenDate, args.debug)  # sensitivities variable is 70 bucket KRDs
 
         # misc.log('Step 3: Read in liability KRDs from excel inputs; optimize asset KRDs and liability KRDs; output to a solutions.xlsx file', LOGFILE)
 
@@ -163,9 +163,9 @@ def main():  # model_portfolio.py new version
 
             # Solutions file name to feed into the code:
             # existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
-            # existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
+            existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
             # existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
-            existing_solutions_file_name = 'solutions' + cur_date + ' Modified v2.xlsx'
+            # existing_solutions_file_name = 'solutions' + cur_date + ' Modified v2.xlsx'
 
             # Get solutions file path:
             solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
@@ -243,7 +243,8 @@ def main():  # model_portfolio.py new version
                                                                                                             solutions[
                                                                                                                 asset_type],
                                                                                                             GivenDate,
-                                                                                                            asset_type)
+                                                                                                            asset_type,
+                                                                                                            args.debug)
 
         print('Successfully ran: Cashflows from solutions.')
         # misc.log('Successfully ran: Cashflows from solutions.', LOGFILE)

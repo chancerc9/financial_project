@@ -1,5 +1,5 @@
 """
-Name: file_utils.py
+Name: file_utils.py (output utils)
 
 Purpose:
     Writes output to Excel files.
