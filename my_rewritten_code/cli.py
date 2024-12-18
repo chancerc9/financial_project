@@ -70,3 +70,5 @@ def get_user_info() -> tuple[argparse.Namespace, pd.Timestamp, pd.Timestamp]:
     return args, GivenDate
 
 
+def configurations():
+    pass

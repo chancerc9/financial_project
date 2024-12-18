@@ -162,10 +162,12 @@ def main():  # model_portfolio.py new version
             print("Reading in solutions file:")
 
             # Solutions file name to feed into the code:
-            existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
+            # existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
+            # existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
             # existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
+            existing_solutions_file_name = 'solutions' + cur_date + ' Modified v2.xlsx'
 
-            # retrieve solutions file path:
+            # Get solutions file path:
             solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
 
             excel_path = solutions_path

@@ -22,6 +22,7 @@ sys.path.append(sysenv.get("ALM_DIR"))
 # Required custom modules
 import calculations as helpers
 import file_utils as file_utils
+import datahandler
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
@@ -149,12 +150,12 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
         - df_mortgages: Mortgages.
     """
     # 1 for segments, 0 for totals
-    totals = helpers.BSTotals(Given_date, sheet_version)
+    totals = datahandler.BSTotals(Given_date, sheet_version)
 
-    weights = helpers.percents(  # gets weighting for each asset mix
-        Given_date)  # weights for total is same as weights for everything else, maybe that's where the problem shows - see weights in hardcoded.xlsx (OR)
+    weights = datahandler.percents(Given_date)  # gets weighting for each asset mix
+                                                # weights for total is same as weights for everything else - see weights in hardcoded.xlsx
     weights = weights[['ACCUM', 'PAYOUT', 'UNIVERSAL', 'NONPAR', 'GROUP', 'PARCSM', 'Total', 'Surplus', 'SEGFUNDS']]
-    weights = weights.dropna(axis=1, how='all')  # Remove columns with all NaNs (* inefficient *)
+    weights = weights.dropna(axis=1, how='all')  # Remove columns with all NaNs (inefficient)
 
     # Multiply the balance by asset percents of segments to get asset mix:
     df = weights.multiply(pd.Series(totals))
@@ -214,31 +215,33 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, a
 
     # Reads in targets sensitivities to match sols:
     ''' Separating the db values into 3 tables, one for each asset class '''
-    private_sensitivity = helpers.private_sensitivities(given_date).set_index(['portfolio', 'rating'])
-    mortgage_sensitivity = helpers.mortgage_sensitivities(given_date).set_index(['portfolio', 'rating'])
+    # private_sensitivity = helpers.private_sensitivities(given_date).set_index(['portfolio', 'rating']) # TODO! commented out, not sure what it did
+    # mortgage_sensitivity = helpers.mortgage_sensitivities(given_date).set_index(['portfolio', 'rating'])
 
     ''' Setting the sensitivities to be used as targets for the optimizer, for the correct asset class'''
+    net_sensitivity = datahandler.get_liability_sensitivities(given_date, asset_type)
+
     if asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities(given_date)
-        total_sensitivity = net_sensitivity
+        # net_sensitivity = helpers.private_sensitivities(given_date)
+        total_sensitivity = net_sensitivity.copy()
 
     elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities(given_date)
-        total_sensitivity = net_sensitivity
+        # net_sensitivity = helpers.mortgage_sensitivities(given_date)
+        total_sensitivity = net_sensitivity.copy()
 
-    else:
+    #else:
         ''' For the public optimization, we subtract the private and mortgage target sensitivities from the public target and optimize for the net sensitivity '''
-        net_sensitivity = helpers.public_sensitivities(given_date)
+        #net_sensitivity = helpers.public_sensitivities(given_date)
 
     ''' For the sensitivity targets for the public totals, we subtract the public and mortgage components of all ratings
     we sum the public sensitivities for all 5 portfolios, then subtract the sum of privates for all portfolios, including ParCSM and Surplus'''
-    if asset_type == 'public':
-        net_sensitivity = helpers.public_sensitivities(given_date)
+    #if asset_type == 'public':
+        #net_sensitivity = helpers.public_sensitivities(given_date)
 
-    elif asset_type == 'private':
-        net_sensitivity = helpers.private_sensitivities(given_date)
-    elif asset_type == 'mortgage':
-        net_sensitivity = helpers.mortgage_sensitivities(given_date)
+    #elif asset_type == 'private':
+        #net_sensitivity = helpers.private_sensitivities(given_date)
+    #elif asset_type == 'mortgage':
+        #net_sensitivity = helpers.mortgage_sensitivities(given_date)
 
     solution_df = pd.DataFrame()
     solved_dollar_sensitivities = pd.DataFrame()

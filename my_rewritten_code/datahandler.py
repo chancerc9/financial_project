@@ -26,6 +26,7 @@ from equitable.db.db_functions import execute_table_query
 from equitable.infrastructure import sysenv
 
 
+# Read in FTSE data from database
 class FTSEDataHandler:
     """
     A class to retrieve, process, and provide controlled access to bond data
@@ -195,7 +196,6 @@ class FTSEDataHandler:
         self.refresh_data()
 
 
-"""Read in semi-annual bond curves from excel"""
 
 # ----- read in data -----
 from datetime import datetime
@@ -243,6 +243,259 @@ def set_input_path(given_date: datetime, file_name: str) -> Path:
     return path_input
 
 
+
+
+### Reads in input ###
+"""Reads in assets"""
+
+# Reads in asset totals from SBS_totals.xlsx
+def BSTotals(given_date: datetime, sheet_version: int) -> dict:
+    """
+    Retrieves the balance sheet totals from the "SBS Totals.xlsx" file based on the provided date.
+
+    Parameters:
+    given_date (datetime): The date for which the balance sheet totals are requested.
+    sheet_version (int): Determines if totals or segments are returned (1 for segments, 0 for totals).
+
+    Returns:
+    dict: A dictionary containing balance sheet totals for different categories.
+    """
+
+    # file_name = "SBS Totals Modified.xlsx"
+    # file_name = "SBS Totals SC.xlsx"
+    file_name = "SBS Totals.xlsx"
+
+    # path for given input:
+    path_input = set_input_path(given_date, file_name)
+
+    # Open workbook:
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+
+    # Retrieve the appropriate worksheet based on sheet version
+    ws = workbook['Segments'] if sheet_version == 1 else workbook['Total']
+
+    data = ws.values
+    columns = next(data)
+    df = pd.DataFrame(data, columns=columns)
+
+    # Extract and return totals for relevant categories
+    totals = {
+        'ACCUM': df.loc[2, 'ACCUM'],
+        'PAYOUT': df.loc[2, 'PAYOUT'],
+        'UNIVERSAL': df.loc[2, 'UNIVERSAL'],
+        'NONPAR': df.loc[2, 'NONPAR'],
+        'GROUP': df.loc[2, 'GROUP'],
+        'PARCSM': df.loc[2, 'PARCSM'],
+        'SEGFUNDS': df.loc[2, 'SEGFUNDS'],
+        'Surplus': df.loc[2, 'Surplus'],
+        'Total': df.loc[2, 'Total']
+    }
+
+    return totals
+
+
+# Asset mix.xlsx reading in function
+def percents(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves asset mix percentages from the "Asset Mix.xlsx" file for the given date.
+
+    Parameters:
+    given_date (datetime): The date for which the asset mix percentages are requested.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing asset mix percentages for various bond ratings.
+    """
+
+    file_name = "Asset Mix.xlsx"
+    # file_name = "Asset Mix Modified.xlsx"
+    # file_name = "Asset Mix SC.xlsx"
+    # file_name = "Asset Mix Prov -1%.xlsx"
+
+    path_input = set_input_path(given_date, file_name)
+
+    # Open workbook:
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+
+    # Retrieve the appropriate worksheet:
+    ws = workbook['Sheet1']
+
+    data = ws.values
+    columns = next(data)
+    df = pd.DataFrame(data, columns=columns).set_index('rating')
+
+    # Initialize surplus and SEGFUNDS columns
+    df['Surplus'] = df['SEGFUNDS'] = 0
+
+    # Filter rows to include only relevant bond categories
+    df = df.loc[['Federal',
+                 'Provincial',
+                 'CorpAAA_AA',
+                 'CorpA',
+                 'CorpBBB',
+                 'MortgagesInsured',
+                 'MortgagesConv',
+                 'PrivateAA',
+                 'PrivateA',
+                 'PrivateBBB',
+                 'PrivateBB_B']]
+
+    return df
+
+
+# end of Asset Mix.xlsx reading in function.
+
+
+"""Read in liability sensitivities"""
+
+
+# Reads in liabilities from Targets by asset class
+def get_liability_sensitivities(given_date: datetime, liability_type: str = 'public'): # file_path: str,
+    """
+    example:
+        file_path: str = "Targets By Asset Class.xlsx"
+
+    liability_type can be one of
+    'public'
+    'mortgage'
+    'private'
+        and matches with asset class.
+
+    returns DataFrame of liability sensitivities for selected asset class.
+    """
+
+    file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class SC.xlsx"
+
+    # file_name = "Targets By Asset Class 100%.xlsx"
+    # file_name = "Targets By Asset Class Modified.xlsx"
+
+    path_input = set_input_path(given_date, file_name)
+
+    sheet = liability_type
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+
+
+# Targets by Asset Class.xlsx reading in functions:
+def public_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves public asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for public asset classes.
+    """
+
+    # file_name = "Targets By Asset Class Modified.xlsx"
+    # file_name = "Targets By Asset Class SC.xlsx"
+    file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class 100%.xlsx"
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+    quarter = f"Q{quarter}"
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+    sheet = 'public'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+
+
+def private_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves private asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for private asset classes.
+    """
+    file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class SC.xlsx"
+
+    # file_name = "Targets By Asset Class 100%.xlsx"
+    # file_name = "Targets By Asset Class Modified.xlsx"
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+
+    quarter = f"Q{quarter}"
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+    sheet = 'private'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+
+
+def mortgage_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves mortgage asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for mortgage asset classes.
+    """
+    # file_name = "Targets By Asset Class SC.xlsx"
+
+    file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class 100%.xlsx"
+    # file_name = "Targets By Asset Class Modified.xlsx" # TODO! pull out the targets by asset class for sure
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+
+    quarter = f"Q{quarter}"
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+    sheet = 'mortgage'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+# end of Targets by Asset Class reading in functions.
+
+
+
+
+"""Read in semi-annual bond curves from excel"""
+# Reads in bond curves
 def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     """
     Returns a dataframe of semi-annual bond curves.
