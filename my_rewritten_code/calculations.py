@@ -25,6 +25,7 @@ from scipy import interpolate
 
 # Required custom modules
 import file_utils
+import helpers as helper_function
 
 # Pandas configuration
 pd.set_option('display.width', 150)
@@ -425,23 +426,21 @@ def create_shock_tables(semi_annual_curves, GivenDate: datetime, debug=False) ->
     shocks_dict = {}
     up_shocks = create_general_shock_table()  # creates a df with col named '0', '1', etc
 
-
     cur_date = GivenDate.strftime('%Y%m%d')
 
-    folder_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                               'Brenda', 'shocks_table')
+    if debug:
+        excel_filename = 'shocks_table'
+        folder_path = helper_function.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'code_benchmarking_outputs', cur_date, 'debugging_steps', excel_filename)
 
-    excel_filename = 'shocks_table'
-    file_path = os.path.join(folder_path, f'{excel_filename}_{cur_date}.xlsx')
 
-    if not os.path.exists(folder_path):
-        os.mkdir(folder_path)
+        file_path = os.path.join(folder_path, f'{excel_filename}_{cur_date}.xlsx')
 
-    if not os.path.exists(file_path):
-        with pd.ExcelWriter(file_path) as writer:
-            up_shocks.to_excel(writer, sheet_name='general_shocks')
-    else:
-        print('shocks file for this quarter already exists - cant make a file with the same name')
+
+        if not os.path.exists(file_path):
+            with pd.ExcelWriter(file_path) as writer:
+                up_shocks.to_excel(writer, sheet_name='general_shocks')
+        else:
+            print('shocks file for this quarter already exists - cant make a file with the same name')
 
 
 
@@ -450,12 +449,9 @@ def create_shock_tables(semi_annual_curves, GivenDate: datetime, debug=False) ->
     down_shocks[0] = -down_shocks[0]
     curves_mod = semi_annual_curves
 
-    cur_date = GivenDate.strftime('%Y%m%d')  # givendate to str - consider doing it here or as fn
-
-    CURR_DEBUGGING_PATH = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test',
-                                       'benchmarking_outputs', 'Brenda', cur_date, 'Debugging_Steps')
-    os.makedirs(CURR_DEBUGGING_PATH, exist_ok=True)
-    file_utils.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
+    if debug:
+        CURR_DEBUGGING_PATH = helper_function.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'code_benchmarking_outputs', cur_date, 'debugging_steps')
+        file_utils.write_results_to_excel(curves_mod, CURR_DEBUGGING_PATH, cur_date, 'interpolated_bond_curves')
 
 
     # Apply up and down shocks to bond curves
@@ -487,7 +483,7 @@ def create_shock_tables(semi_annual_curves, GivenDate: datetime, debug=False) ->
 # Interpolating for half-years - side-eff 1
 # """
 
-# TODO: temp function, can split up functionality
+# Unused function for now - can use if wished.
 def create_semi_annual_bond_curves(annual_ftse_curves) -> pd.DataFrame:
     # Interpolating bond curves for half-year intervals (linear interpolation; take average of up-down years)
     curves_mod = pd.DataFrame(
@@ -504,20 +500,15 @@ def create_semi_annual_bond_curves(annual_ftse_curves) -> pd.DataFrame:
     curves_mod.fillna(method='ffill', inplace=True)
 
     return curves_mod
-# Does NOT modify bond curves parameter; assigns to new value from reference data by dereferencing value
 
 
 
-# Function to calculate the average coupon rate for a specific bond rating and year
-# It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
-# The average coupon is weighted by the notional weight of the bond, excluding REITs.
-# The 'price' is MVAI (market weighted price after interest), and we divide it out so removed the market weighting to retain the
-# Notional weighting
-
-# TODO! This actually buckets it for the cashflows
-#  this function is directly related to the create_cashflows_70 function and does the bucketing for it
 def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     """
+    NOTE:
+        # This is the function that buckets the cashflows into 70 buckets.
+
+        #  this function is directly related to the create_cashflows_70 function and does the bucketing for it
     Calculates the average coupon rate for a specific bond rating and year, weighted by the notional weight of the bond.
 
     Parameters:
@@ -561,10 +552,14 @@ def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     return avg_coupon
 
 
-""" Notional Weighting """
 
+# Function to calculate the average coupon rate for a specific bond rating and year
+# It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
+# The average coupon is weighted by the notional weight of the bond, excluding REITs.
+# The 'price' is MVAI (market weighted price after interest), and we divide it out so removed the market weighting to retain the
+# Notional weighting
 
-# TODO: Cashflows * interpolated (unshocked) curves = PV
+# Cashflows * interpolated (unshocked) curves = PV
 
 # Function to calculate the present value (PV) of bonds for a specific rating and year
 # It uses the FTSE data to filter bonds based on the rating and term and then calculates the PV.
@@ -606,7 +601,6 @@ def calc_pv(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
     # market value-adjusted interest (mvai), then dividing by the sum of the market weights.
     
     # I.e., Calculate the present value (PV) as the weighted sum of market value-adjusted interest (mvai)
-    # TODO: change to excel!
     pv = (df['marketweight_noREITs'] * df['mvai']).sum() / df['marketweight_noREITs'].sum()
 
     # Return the calculated present value for the given rating and year

@@ -29,6 +29,7 @@ import openpyxl
 from equitable.db.db_functions import execute_table_query
 from equitable.infrastructure import sysenv
 
+# ----- query data -----
 
 # Read in FTSE data from database
 class FTSEDataHandler:
@@ -201,7 +202,7 @@ class FTSEDataHandler:
 
 
 
-# ----- read in data -----
+# ----- helper functions -----
 
 
 def get_year_and_quarter(given_date: datetime) -> Tuple[str, int]:
@@ -243,10 +244,72 @@ def set_input_path(given_date: datetime, file_name: str) -> Path:
     # Return the full file path
     return path_input
 
+# ----- read in data - optional -----
+
+"""Reads in specific solutions, only ran if -use_solutions is specified in user configs"""
+def read_specific_solutions(GivenDate, cur_date) -> dict:
+    """
+    Reads the 'public_solution', 'mortgage_solution', and 'private_solution' sheets
+    from the provided Excel workbook. Returns a dictionary mapping sheet names to DataFrames.
+    Parameters
+    ----------
+    excel_file_path : str
+        The full path to the Excel file containing the required sheets.
+    Returns
+    -------
+    dict
+        A dictionary with keys 'public_solution', 'mortgage_solution', 'private_solution',
+        and values as the corresponding Pandas DataFrames.
+    Raises
+    ------
+    FileNotFoundError
+        If the specified Excel file does not exist or is unreadable.
+    ValueError
+        If one or more of the required sheets are missing from the workbook.
+    Examples
+    --------
+    >>> dfs = read_specific_solutions("path/to/data_solutions.xlsx")
+    >>> public_df = dfs["public_solution"]
+    >>> mortgage_df = dfs["mortgage_solution"]
+    >>> private_df = dfs["private_solution"]
+    """
+
+    # Solutions file name to feed into the code:
+    # existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
+    existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
+    # existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
+    # existing_solutions_file_name = 'solutions' + cur_date + ' Modified v2.xlsx'
 
 
 
-### Reads in input ###
+    # Get solutions file path:
+    excel_file_path = set_input_path(GivenDate, existing_solutions_file_name)
+
+    required_sheets = ["public_solution", "mortgage_solution", "private_solution"]
+    # First, we verify that the file can be opened and the required sheets exist.
+
+    try:
+        excel_obj = pd.ExcelFile(excel_file_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Could not find or open the Excel file at: {excel_file_path}")
+    except Exception as e:
+        raise ValueError(f"An error occurred while reading the Excel file: {e}")
+    missing_sheets = [sheet for sheet in required_sheets if sheet not in excel_obj.sheet_names]
+    if missing_sheets:
+        raise ValueError(
+            f"The following required sheets are missing from {excel_file_path}: {missing_sheets}"
+        )
+    # Read the three sheets into a dictionary of DataFrames.
+    solutions = {}
+    for sheet in required_sheets:
+        df = pd.read_excel(excel_file_path, sheet_name=sheet, index_col=0)
+        asset_type_name = sheet.replace("_solution", "")
+        solutions[asset_type_name] = df
+    return solutions
+
+
+# ----- read in data - mandatory -----
+
 """Reads in assets"""
 
 # Reads in asset totals from SBS_totals.xlsx
@@ -345,8 +408,6 @@ def percents(given_date: datetime) -> pd.DataFrame:
 
 
 """Read in liability sensitivities"""
-
-
 # Reads in liabilities from 'Targets by Asset Class.xlsx'
 def get_liability_sensitivities(given_date: datetime, liability_type: str = 'public'): # file_path: str,
     """
@@ -368,6 +429,7 @@ def get_liability_sensitivities(given_date: datetime, liability_type: str = 'pub
     # file_name = "Targets By Asset Class 100%.xlsx"
     # file_name = "Targets By Asset Class Modified.xlsx"
 
+
     path_input = set_input_path(given_date, file_name)
 
     sheet = liability_type
@@ -379,7 +441,6 @@ def get_liability_sensitivities(given_date: datetime, liability_type: str = 'pub
 
     return df
 # end of Targets by Asset Class reading in functions.
-
 
 
 
@@ -410,3 +471,4 @@ def get_bond_curves(GivenDate: datetime) -> pd.DataFrame:
     df.index.name = 'Term Bucket'
 
     return df
+

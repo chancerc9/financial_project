@@ -63,18 +63,6 @@ class Curves:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def create_summed_cashflow_tables(bond_curves: pd.DataFrame,
                                   FTSE_Universe_data: pd.DataFrame,
                                   IndexTable: pd.DataFrame,
@@ -134,13 +122,13 @@ The function aggregates per portfolio and rating.
 
     # External helpers assumed:
     # helpers.create_weight_tables(FTSE_Universe_data) -> (weights, totals)
-    # helpers.create_shock_tables(bond_curves, given_date) -> shock_tables
+    # helpers.create_shock_tables(bond_curves, given_date, debug) -> shock_tables
     # helpers.create_cf_tables(FTSE_Universe_data) -> cf (dict of rating->DataFrame)
     # assets.reading_asset_mix(given_date) -> (df_public, df_private, df_mortgage)
 
     # Load necessary weights, shocks, cashflows and asset mix information
     weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
-    shock_tables = helpers.create_shock_tables(bond_curves, given_date) # Shock can be a class inherited by Curves or vice versa.
+    shock_tables = helpers.create_shock_tables(bond_curves, given_date, debug) # Shock can be a class inherited by Curves or vice versa.
 
     # Load asset mix for the specified asset type and adjust names if needed:
     df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date)
@@ -165,16 +153,16 @@ The function aggregates per portfolio and rating.
 
     cur_date = given_date.strftime('%Y%m%d')
 
-    def write_debug_file(df, name, subdir='benchmarking_tables'):
-        if debug:
-            import helpers as helper_function
-            cur_date_str = given_date.strftime('%Y%m%d')
-            path = helper_function.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                                'Brenda', subdir, cur_date_str)
-            file_path = os.path.join(path, f'{name}_{cur_date_str}.xlsx')
-            if not os.path.exists(file_path):
-                with pd.ExcelWriter(file_path) as writer:
-                    df.to_excel(writer, sheet_name='Sheet1', index=False)
+    # This function can now use the variables defined above ha.
+    def write_debug_file(df: pd.DataFrame, file_name: str, subdir='benchmarking_tables', cur_date = given_date.strftime('%Y%m%d')):
+    # if debug:
+        import helpers as helper_function
+        # cur_date_str = given_date.strftime('%Y%m%d')
+        path = helper_function.build_and_ensure_directory(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'code_benchmarking_outputs', cur_date, 'debugging_steps', subdir)
+        file_path = os.path.join(path, file_name)
+        if not os.path.exists(file_path):
+            with pd.ExcelWriter(file_path) as writer:
+                df.to_excel(writer, sheet_name='Sheet1', index=False)
 
 
     summed_cfs_dict = {}
@@ -236,7 +224,7 @@ The function aggregates per portfolio and rating.
                 subdir = 'benchmarking_outputs'
 
                 pv_array_df = pd.DataFrame(pv_array)
-                write_debug_file(pv_array_df, file_name, subdir)
+                write_debug_file(pv_array_df, file_name, subdir, cur_date)
 
 
 
@@ -297,7 +285,7 @@ The function aggregates per portfolio and rating.
                 file_name = f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx'
                 subdir = 'benchmarking_outputs'
 
-                write_debug_file(debug_df, file_name, subdir) # but anyway, reduce functionality for function is good
+                write_debug_file(debug_df, file_name, subdir, cur_date) # but anyway, reduce functionality for function is good
 
                 #path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
                 #                    'Brenda', 'benchmarking_tables', cur_date)

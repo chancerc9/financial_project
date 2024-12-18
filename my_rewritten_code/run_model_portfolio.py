@@ -163,17 +163,20 @@ def main():  # model_portfolio.py new version
 
             # Solutions file name to feed into the code:
             # existing_solutions_file_name = 'solutions' + cur_date + '.xlsx'
-            existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
+            # existing_solutions_file_name = 'solutions' + cur_date + ' SC.xlsx'
             # existing_solutions_file_name = 'solutions' + cur_date + ' Modified' + '.xlsx'
             # existing_solutions_file_name = 'solutions' + cur_date + ' Modified v2.xlsx'
 
             # Get solutions file path:
-            solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
+            # solutions_path = datahandler.set_input_path(GivenDate, existing_solutions_file_name)
 
-            excel_path = solutions_path
+
+            # excel_path = solutions_path
 
             try:
-                dataframes_dict = helpers.read_specific_solutions(excel_path)
+                # dataframes_dict = helpers.read_specific_solutions(excel_path)
+                dataframes_dict = datahandler.read_specific_solutions(GivenDate, cur_date)
+
                 # At this point, dataframes_dict contains the three DataFrames keyed by their sheet names.
                 # You may proceed with further analysis or transformations here.
             except Exception as err:
