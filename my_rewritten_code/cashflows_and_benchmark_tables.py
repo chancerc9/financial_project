@@ -11,34 +11,22 @@ Side effects:
 
 """
 import os
-
+import numpy as np
 import pandas as pd
-
-# from benchmarking.helpers_test_2 import create_shock_tables
+import datetime as dt
 
 pd.set_option('display.width', 150)
 from equitable.infrastructure import sysenv
-from equitable.db.psyw import SmartDB
 
 import calculations as helpers
 import solutions as bench
 
 
 
-BM_conn = SmartDB('Benchmark')
-BM_cur = BM_conn.con.cursor()
-
-Bond_conn = SmartDB('Bond')
-Bond_cur = Bond_conn.con.cursor()
-
-General_conn = SmartDB('General')
-General_cur = General_conn.con.cursor()
-
 # Generate_benchmarking_tables.py
 
 
-import numpy as np
-import pandas as pd
+
 
 # class bond curves, all to do wiht the curves - so accumulate functions together and use same attributes - items
 
@@ -73,15 +61,30 @@ class Curves:
 """
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def create_summed_cashflow_tables(bond_curves: pd.DataFrame,
                                   FTSE_Universe_data: pd.DataFrame,
                                   IndexTable: pd.DataFrame,
                                   solution_df: pd.DataFrame,
-                                  given_date,
-                                  asset_type='public',
-                                  debug=False):
+                                  given_date: dt,
+                                  asset_type='public'):
+
     """
-    Refactored version of the create_summed_cashflow_tables function with clearer understanding of data structures.
+    Creates cashflows from solutions.
+
     Assumptions:
 cf[rating]: DataFrame with 73 columns total:
 First 3 columns: [Bucket, Principal, Coupon]
@@ -91,6 +94,7 @@ First 3 columns: [Term, Lower_Bound, Upper_Bound]
 Next 6 columns: The weights for the 6 aggregated buckets
 shock_tables[rating + ' - Up']: DataFrame providing discount factors or some shock adjustments with at least one column of length 70.
 The function aggregates per portfolio and rating.
+
     Parameters:
       bond_curves: pd.DataFrame
       FTSE_Universe_data: pd.DataFrame
@@ -98,145 +102,11 @@ The function aggregates per portfolio and rating.
       solution_df: pd.DataFrame
       given_date: datetime-like, the starting date
       asset_type: str, one of ['public', 'private', 'mortgage']
-      debug: bool, if True write intermediate outputs to Excel
+      debug: bool, if True write intermediate outputs to Excel (future variable)
+
     Returns:
       summed_cfs_dict: dict of {portfolio: DataFrame} with aggregated cashflows and carry tables
     """
-    # Rename columns and portfolios in solution_df
-    rename_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
-    portfolio_map = {
-        'Total': 'TOTAL',
-        'np': 'NONPAR',
-        'group': 'GROUP',
-        'Accum': 'ACCUM',
-        'Payout': 'PAYOUT',
-        'ul': 'UNIVERSAL',
-        'Surplus': 'SURPLUS'
-    }
-    # Ratings and portfolios of interest
-    rating_list = ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB']
-    portfolio_list = ['NONPAR', 'GROUP', 'PAYOUT', 'ACCUM', 'UNIVERSAL', 'SURPLUS', 'TOTAL']
-    solution_df = solution_df.rename(columns=rename_map)
-    solution_df['portfolio'] = solution_df['portfolio'].replace(portfolio_map)
-    solution_df['rating'] = solution_df['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
-    # External helpers assumed:
-    # helpers.create_weight_tables(FTSE_Universe_data) -> (weights, totals)
-    # helpers.create_shock_tables(bond_curves, given_date) -> shock_tables
-    # helpers.create_cf_tables(FTSE_Universe_data) -> cf (dict of rating->DataFrame)
-    # assets.reading_asset_mix(given_date) -> (df_public, df_private, df_mortgage)
-    weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
-    shock_tables = helpers.create_shock_tables(bond_curves, given_date)
-    cf = helpers.create_cf_tables(FTSE_Universe_data)
-    df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date)
-    if asset_type == 'private':
-        asset_mix = df_private
-    elif asset_type == 'mortgage':
-        asset_mix = df_mortgage
-    else:
-        asset_mix = df_public
-    asset_mix.rename(columns=portfolio_map, inplace=True)
-    # Monthly date range for 35 years
-    date_range = pd.date_range(given_date, periods=420, freq='ME')
-    # Half-year increments start from given_date + 6 months
-    start_date = given_date + pd.DateOffset(months=6)
-    half_year_dates = pd.date_range(start=start_date, periods=70, freq='6M')
-    ftse_data = IndexTable.copy()
-    def write_debug_file(df, name, subdir='benchmarking_tables'):
-        if debug:
-            cur_date_str = given_date.strftime('%Y%m%d')
-            path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                                'Brenda', subdir, cur_date_str)
-            os.makedirs(path, exist_ok=True)
-            file_path = os.path.join(path, f'{name}_{cur_date_str}.xlsx')
-            if not os.path.exists(file_path):
-                with pd.ExcelWriter(file_path) as writer:
-                    df.to_excel(writer, sheet_name='Sheet1', index=False)
-    summed_cfs_dict = {}
-    for portfolio in portfolio_list:
-        portfolio_solution = solution_df.loc[solution_df['portfolio'] == portfolio].set_index('rating')
-        summed_cfs = pd.DataFrame({'date': date_range})
-        carry_table = pd.DataFrame(columns=rating_list, index=['market Value', 'Average Yield'])
-        for rating in rating_list:
-            # If rating not applicable for this asset type and portfolio combination, skip
-            if (
-                (asset_type == 'mortgage' and ((portfolio == 'UNIVERSAL') or (rating not in ['Federal', 'CorporateBBB']))) or
-                (asset_type == 'private' and rating in ['Federal', 'Provincial'])
-            ):
-                carry_table.loc['market Value', rating] = 0
-                carry_table.loc['Average Yield', rating] = 0
-                summed_cfs[rating] = 0
-                continue
-            ups = shock_tables[rating + ' - Up']
-            # Extract 70x70 CF matrix (skipping first 3 columns)
-            cfs_rating_df = cf[rating].iloc[:, 3:]
-            # PV scaling
-            pv_vectorized = cfs_rating_df.values @ ups.iloc[:, 0].values
-            cfs_rating_adj = cfs_rating_df.div(pv_vectorized, axis=0).replace([np.inf, -np.inf, np.nan], 0.0)
-            # Solutions for this rating in this portfolio
-            if rating in portfolio_solution.index:
-                solutions_values = portfolio_solution.loc[rating].values
-            else:
-                solutions_values = np.zeros(6)
-            market_value = asset_mix.loc[rating, portfolio] if (rating in asset_mix.index) else 0.0
-            sol_scaled_mv = np.nan_to_num(market_value * solutions_values, nan=0.0)
-            # Extract weights (70x6) skipping first 3 columns
-            weights_df = weights[rating].iloc[:, 3:]
-            # Aggregate into 6 buckets
-            cfs_aggregated_6_buckets = (cfs_rating_adj.values.T @ weights_df.values)
-            cfs_aggregated_6_buckets = np.nan_to_num(cfs_aggregated_6_buckets, nan=0.0)
-            # Final half-year CF vector (70 elements)
-            final_CFs_rating_arr = cfs_aggregated_6_buckets @ sol_scaled_mv
-            # Insert into summed_cfs
-            summed_cfs = summed_cfs.set_index('date')
-            if rating not in summed_cfs.columns:
-                summed_cfs[rating] = 0.0
-            temp_series = pd.Series(final_CFs_rating_arr, index=half_year_dates)
-            summed_cfs[rating] = summed_cfs[rating].add(temp_series, fill_value=0.0)
-            summed_cfs = summed_cfs.reset_index()
-            # Debug files if needed
-            if debug:
-                write_debug_file(pd.DataFrame(pv_vectorized), f'{rating}_pv_actuals_of_cfs', 'pv_actuals')
-                write_debug_file(pd.DataFrame(cfs_aggregated_6_buckets), f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets')
-            # Compute yield
-            df_rating = ftse_data.loc[ftse_data['RatingBucket'] == rating]
-            wgt_col = f'Benchmark {portfolio} weight'
-            if wgt_col in df_rating.columns and 'yield' in df_rating.columns and df_rating[wgt_col].sum() != 0:
-                yield_val = (df_rating[wgt_col] * df_rating['yield']).sum() / df_rating[wgt_col].sum()
-            else:
-                yield_val = 0.0
-            carry_table.loc['market Value', rating] = market_value
-            carry_table.loc['Average Yield', rating] = yield_val
-        # Format dates at the end
-        summed_cfs['date'] = pd.to_datetime(summed_cfs['date']).dt.strftime('%b-%Y')
-        # Concatenate carry table at the top
-        final_df = pd.concat([carry_table, summed_cfs.set_index('date')])
-        final_df = final_df.fillna(0)
-        summed_cfs_dict[portfolio] = final_df
-    return summed_cfs_dict
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data: pd.DataFrame, IndexTable: pd.DataFrame, solution_df, given_date, asset_type='public'):
-    # Adjust solution_df portfolio names to standardize column names for processing
 
     # Data protection:
     benchmarking_solution = solution_df.copy()
@@ -244,6 +114,7 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
     ftse_data = IndexTable.copy()
     bond_curves = bond_curves.copy()
 
+    # Rename columns and portfolios in solution_df
     benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
     benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace({'Total': 'TOTAL',
                                                                                      'np': 'NONPAR',
@@ -256,13 +127,11 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
                                                                                      # Load necessary FTSE data, weights, and asset mix information
     benchmarking_solution['rating'] = benchmarking_solution['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
 
-    # ftse_data = helpers.get_ftse_data(given_date)
     weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
-    # ftse_data = create_indexData_table(solution_df, given_date, FTSE_Universe_data, asset_type=asset_type) # This index table is perfect to use actually - create_index_table comes before create summed cashflows
 
     """ new code; can place in class"""
     # bond_curves = helpers.get_bond_curves(given_date)
-    shock_tables = helpers.create_shock_tables(bond_curves, given_date) # use a rating for bond classes (shock tables is general tho, can be decoupled outside and passed
+    shock_tables = helpers.create_shock_tables(bond_curves, given_date)
     # Shock can be a class inherited by Curves or v.v.
     """end of new code"""
 
@@ -271,10 +140,8 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
 
     if asset_type == 'private':
         asset_mix = df_private
-
     elif asset_type == 'mortgage':
         asset_mix = df_mortgage
-
     else:
         asset_mix = df_public
 
@@ -455,7 +322,7 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame, FTSE_Universe_data:
         summed_cfs = pd.concat([carry_table, summed_cfs.set_index('date')])
 
         # Store results in the final output dictionary
-        summed_cfs_dict[portfolio] = summed_cfs.fillna(0).infer_objects(copy=False)
+        summed_cfs_dict[portfolio] = summed_cfs.fillna(0)
 
     return summed_cfs_dict
 
@@ -470,10 +337,10 @@ def create_summary_table(given_date, asset_type='public'):
     else:
         asset_mix = df_public
 
-    df = pd.DataFrame(0, index=['Portfolio Yield', 'Portfolio Duration', 'Portfolio Balance', 'quarterly expected income', 'Capital estimate'], columns=['Total', 'np', 'group', 'Accum', 'Payout', 'ul'])
+    df = pd.DataFrame(0.0, index=['Portfolio Yield', 'Portfolio Duration', 'Portfolio Balance', 'quarterly expected income', 'Capital estimate'], columns=['Total', 'np', 'group', 'Accum', 'Payout', 'ul'])
     for portfolio in ['Total', 'np', 'group', 'Accum', 'Payout', 'ul']:
         df.loc['Portfolio Balance', portfolio] = sum(asset_mix[portfolio])
-    df['SURPLUS'] = 0
+    df['SURPLUS'] = 0.0
     df.loc['Portfolio Balance', 'SURPLUS'] = df.loc['Portfolio Balance', 'Total'] - df[['np', 'group', 'Payout', 'Accum', 'ul']].sum(axis=1)['Portfolio Balance']
 
     df.rename(columns={'Total': 'TOTAL', 'np': 'NONPAR', 'group': 'GROUP', 'Accum': 'ACCUM', 'Payout': 'PAYOUT', 'ul': 'UNIVERSAL'}, inplace=True)

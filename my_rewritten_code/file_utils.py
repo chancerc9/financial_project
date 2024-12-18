@@ -44,9 +44,10 @@ def write_data_to_excel(data, file_path):
 """
 
 import os
-import pandas as pd
 from pathlib import Path
 from typing import Dict
+import pandas as pd
+
 
 class ExcelOutputWriter:
     def __init__(self, base_dir: str, cur_date: str):

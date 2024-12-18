@@ -1,5 +1,5 @@
 """
-Name: .py
+Name: calculations.py
 
 Purpose:
 
@@ -13,14 +13,13 @@ Side effects:
 import datetime as datetime
 import os
 import sys
-from typing import Any
+from typing import Any, Dict, List
 
 # Third-party library imports
 import numpy as np
 import openpyxl
 import pandas as pd
 # Project-specific imports
-from equitable.db.psyw import SmartDB
 from equitable.infrastructure import sysenv
 from scipy import interpolate
 
@@ -31,20 +30,13 @@ import file_utils
 pd.set_option('display.width', 150)
 
 # Add system paths
-sys.path.append(sysenv.get("ALM_DIR"))  # Add ALM_DIR to system path for additional modules
+sys.path.append(sysenv.get("ALM_DIR"))
 
-# Database connections
-BM_conn = SmartDB('Benchmark')
-BM_cur = BM_conn.con.cursor()
-
-Bond_conn = SmartDB('Bond')
-Bond_cur = Bond_conn.con.cursor()
-
-General_conn = SmartDB('General')
-General_cur = General_conn.con.cursor()
 
 ### Reads in input ###
 """Reads in assets"""
+
+# Unchanged file:
 def get_expected_returns() -> pd.DataFrame:
     """
     Reads and interpolates expected bond returns from the "Parallel_tilt_curve_history.xlsx" file for various bond
@@ -90,8 +82,7 @@ def get_expected_returns() -> pd.DataFrame:
     return return_assumptions / 100  # Convert to percentage returns
 
 
-
-
+# Reads in asset totals from SBS_totals.xlsx
 def BSTotals(given_date: datetime, sheet_version: int) -> dict:
     """
     Retrieves the balance sheet totals from the "SBS Totals.xlsx" file based on the provided date.
@@ -111,8 +102,8 @@ def BSTotals(given_date: datetime, sheet_version: int) -> dict:
     quarter = f"Q{quarter}"
 
     # file_name = "SBS Totals Modified.xlsx"
-    # file_name = "SBS Totals - Brenda.xlsx"
-    file_name = "SBS Totals.xlsx"
+    file_name = "SBS Totals SC.xlsx"
+    # file_name = "SBS Totals.xlsx"
     dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
     os.makedirs(dir_path, exist_ok=True)
 
@@ -166,7 +157,9 @@ def percents(given_date: datetime, curMonthBS: bool = False) -> pd.DataFrame:
     quarter = f"Q{quarter}"
 
     # file_name = "Asset Mix Modified.xlsx"
-    file_name = "Asset Mix.xlsx"
+    # file_name = "Asset Mix.xlsx"
+    file_name = "Asset Mix SC.xlsx"
+
     # file_name = "Asset Mix Prov -1%.xlsx" # TODO! for run2
 
     dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
@@ -200,8 +193,133 @@ def percents(given_date: datetime, curMonthBS: bool = False) -> pd.DataFrame:
                  'PrivateBB_B']]
 
     return df
-# end of Asset Mix.xlsx reading in funciton
-from typing import Dict
+# end of Asset Mix.xlsx reading in function.
+
+
+"""Read in liability sensitivities"""
+# Reads in liabilities from Targets by asset class
+
+# Targets by Asset Class.xlsx reading in functions:
+def public_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves public asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for public asset classes.
+    """
+
+    # file_name = "Targets By Asset Class Modified.xlsx"
+    file_name = "Targets By Asset Class SC.xlsx"
+    # file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class 100%.xlsx"
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+    quarter = f"Q{quarter}"
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+    sheet = 'public'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+
+def private_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves private asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for private asset classes.
+    """
+    # file_name = "Targets By Asset Class.xlsx"
+    file_name = "Targets By Asset Class SC.xlsx"
+
+    # file_name = "Targets By Asset Class 100%.xlsx"
+    # file_name = "Targets By Asset Class Modified.xlsx"
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+
+    quarter = f"Q{quarter}"
+
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+    sheet = 'private'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+
+def mortgage_sensitivities(given_date: datetime) -> pd.DataFrame:
+    """
+    Retrieves mortgage asset class sensitivities from the "Targets By Asset Class.xlsx" file.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the sensitivities for mortgage asset classes.
+    """
+    file_name = "Targets By Asset Class SC.xlsx"
+
+    # file_name = "Targets By Asset Class.xlsx"
+    # file_name = "Targets By Asset Class 100%.xlsx"
+    # file_name = "Targets By Asset Class Modified.xlsx" # TODO! pull out the targets by asset class for sure
+
+    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
+
+    year = given_date.strftime("%Y")
+    quarter = ((given_date.month - 1) // 3) + 1
+    year_quarter = f"{year}Q{quarter}"
+
+    quarter = f"Q{quarter}"
+
+
+    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
+    os.makedirs(dir_path, exist_ok=True)
+
+    path_input = os.path.join(dir_path,
+                              file_name)
+
+
+    sheet = 'mortgage'
+    workbook = openpyxl.load_workbook(path_input, data_only=True)
+    ws = workbook[sheet]
+    data = ws.values
+    columns = next(data)[0:]
+    df = pd.DataFrame(data, columns=columns)
+
+    return df
+# end of Targets by Asset Class reading in functions.
+
+
+
+
+
+
+
+
+
+
+## Calculations ##
 
 def solution_dollar_amounts(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -214,12 +332,12 @@ def solution_dollar_amounts(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) 
     Returns:
     pd.DataFrame: A DataFrame with dollar allocations for each portfolio and rating.
     """
-    weights = Asset_mix[['Accum', 'group', 'ul', 'Payout', 'np']].stack().sort_index()  # (*Brenda)
+    weights = Asset_mix[['Accum', 'group', 'ul', 'Payout', 'np']].stack().sort_index()
     weights2 = weights.reset_index(drop=True)
 
     # Filter the solution DataFrame to exclude 'Liability' and 'Total' portfolios
     sols = solution_df[(solution_df['portfolio'] != 'Liability') & (solution_df['portfolio'] != 'Total')].set_index \
-        (['rating', 'portfolio']).sort_index()  # Python has great order-of-operations (*Brenda)
+        (['rating', 'portfolio']).sort_index()
     sols2 = sols.reset_index(drop=True)
 
     # Calculate weighted dollar allocations
@@ -316,9 +434,6 @@ def surplus_table(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.Data
     return surplus.reset_index(drop=True)
 
 
-from typing import List
-from datetime import datetime
-
 def calc_bounds(given_date: datetime, portfolio: str, total: float) -> List[List[float]]:
     """
     Calculates the optimization bounds for cashflow buckets based on historical data for a given portfolio.
@@ -391,7 +506,7 @@ def get_totals_for_rating(df: pd.DataFrame, reset_index: bool = False) -> pd.Dat
     Returns:
     pd.DataFrame: A DataFrame with total values for each rating, with an additional row for portfolio 'Total'.
     """
-    print(df)
+    # print(df)
 
     df_copy = df.copy()
     df_grouped = df_copy.groupby('rating')
@@ -407,115 +522,8 @@ def get_totals_for_rating(df: pd.DataFrame, reset_index: bool = False) -> pd.Dat
     return df_copy.reset_index() if reset_index else df_copy
 
 
-# Reads in liabilities from Targets by asset class
-# Targets by Asset Class functions:
-def public_sensitivities(given_date: datetime) -> pd.DataFrame:
-    """
-    Retrieves public asset class sensitivities from the "Targets By Asset Class.xlsx" file.
 
-    Returns:
-    pd.DataFrame: A DataFrame containing the sensitivities for public asset classes.
-    """
-
-    # file_name = "Targets By Asset Class Modified.xlsx"
-    file_name = "Targets By Asset Class.xlsx"
-    # file_name = "Targets By Asset Class 100%.xlsx"
-
-    year = given_date.strftime("%Y")
-    quarter = ((given_date.month - 1) // 3) + 1
-    year_quarter = f"{year}Q{quarter}"
-    quarter = f"Q{quarter}"
-
-    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
-    os.makedirs(dir_path, exist_ok=True)
-
-    path_input = os.path.join(dir_path,
-                              file_name)
-
-    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
-    sheet = 'public'
-    workbook = openpyxl.load_workbook(path_input, data_only=True)
-    ws = workbook[sheet]
-    data = ws.values
-    columns = next(data)[0:]
-    df = pd.DataFrame(data, columns=columns)
-
-    return df
-
-
-def private_sensitivities(given_date: datetime) -> pd.DataFrame:
-    """
-    Retrieves private asset class sensitivities from the "Targets By Asset Class.xlsx" file.
-
-    Returns:
-    pd.DataFrame: A DataFrame containing the sensitivities for private asset classes.
-    """
-    file_name = "Targets By Asset Class.xlsx"
-    # file_name = "Targets By Asset Class 100%.xlsx"
-    # file_name = "Targets By Asset Class Modified.xlsx"
-
-    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
-
-    year = given_date.strftime("%Y")
-    quarter = ((given_date.month - 1) // 3) + 1
-    year_quarter = f"{year}Q{quarter}"
-
-    quarter = f"Q{quarter}"
-
-
-    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
-    os.makedirs(dir_path, exist_ok=True)
-
-    path_input = os.path.join(dir_path,
-                              file_name)
-
-    sheet = 'private'
-    workbook = openpyxl.load_workbook(path_input, data_only=True)
-    ws = workbook[sheet]
-    data = ws.values
-    columns = next(data)[0:]
-    df = pd.DataFrame(data, columns=columns)
-
-    return df
-
-def mortgage_sensitivities(given_date: datetime) -> pd.DataFrame:
-    """
-    Retrieves mortgage asset class sensitivities from the "Targets By Asset Class.xlsx" file.
-
-    Returns:
-    pd.DataFrame: A DataFrame containing the sensitivities for mortgage asset classes.
-    """
-    file_name = "Targets By Asset Class.xlsx"
-    # file_name = "Targets By Asset Class 100%.xlsx"
-    # file_name = "Targets By Asset Class Modified.xlsx" # TODO! pull out the targets by asset class for sure
-
-    # path_input = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", file_name)
-
-    year = given_date.strftime("%Y")
-    quarter = ((given_date.month - 1) // 3) + 1
-    year_quarter = f"{year}Q{quarter}"
-
-    quarter = f"Q{quarter}"
-
-
-    dir_path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), "Benchmarking", "Inputs", year, quarter)
-    os.makedirs(dir_path, exist_ok=True)
-
-    path_input = os.path.join(dir_path,
-                              file_name)
-
-
-    sheet = 'mortgage'
-    workbook = openpyxl.load_workbook(path_input, data_only=True)
-    ws = workbook[sheet]
-    data = ws.values
-    columns = next(data)[0:]
-    df = pd.DataFrame(data, columns=columns)
-
-    return df
-
-
-### HELPERS CODE ###
+### CALCULATIONS HELPERS CODE ###
 
 #class GetData:
 #class CreateShocks:
@@ -716,7 +724,7 @@ def create_shock_tables(semi_annual_curves, GivenDate: datetime, debug=False) ->
 # """
 
 # TODO: temp function, can split up functionality
-def create_semi_annual_bond_curves(curves) -> pd.DataFrame:  # curves from ftse curves
+def create_semi_annual_bond_curves(annual_ftse_curves) -> pd.DataFrame:
     # Interpolating bond curves for half-year intervals (linear interpolation; take average of up-down years)
     curves_mod = pd.DataFrame(
         columns=['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate'],
@@ -724,24 +732,17 @@ def create_semi_annual_bond_curves(curves) -> pd.DataFrame:  # curves from ftse 
 
     for rating in ['Federal', 'Provincial', 'CorporateAAA_AA', 'CorporateA', 'CorporateBBB', 'Corporate']:
         for i in range(1, 35):
-            curves_mod.loc[i, rating] = curves.loc[i, rating]
+            curves_mod.loc[i, rating] = annual_ftse_curves.loc[i, rating]
         for yr in np.linspace(start=1.5, stop=34.5, num=34):
-            curves_mod.loc[yr, rating] = (curves.loc[yr + .5, rating] + curves.loc[yr - .5, rating]) / 2
+            curves_mod.loc[yr, rating] = (annual_ftse_curves.loc[yr + .5, rating] + annual_ftse_curves.loc[yr - .5, rating]) / 2
 
     curves_mod.loc[0.5] = curves_mod.loc[1]
     curves_mod.fillna(method='ffill', inplace=True)
 
     return curves_mod
-
-
-
 # Does NOT modify bond curves parameter; assigns to new value from reference data by dereferencing value
 
 
-
-# (*begin) Takes each year and looks at rating and FTSE universe (half-year would be from .25 to .75; up quarter year and down quarter year for half year, and so on for every year
-
-##### version 1-OLD begins #####
 
 # Function to calculate the average coupon rate for a specific bond rating and year
 # It uses the FTSE data to filter bonds based on the given rating and term (maturity year).
@@ -795,13 +796,11 @@ def calc_avg_coupon(year: float, rating: str, ftse_data: pd.DataFrame) -> float:
 
     return avg_coupon
 
-##### version 1-OLD ends #####
 
 """ Notional Weighting """
 
 
-# TODO: Cashflows * interpolated (unshocked) curves
-
+# TODO: Cashflows * interpolated (unshocked) curves = PV
 
 # Function to calculate the present value (PV) of bonds for a specific rating and year
 # It uses the FTSE data to filter bonds based on the rating and term and then calculates the PV.

@@ -1,11 +1,12 @@
 # Standard library imports
-import os
 import sys
+import os
+from typing import Union
 
 # Third-party imports
 import pandas as pd
+
 # Local application-specific imports
-from equitable.db.psyw import SmartDB
 from equitable.infrastructure import sysenv
 from equitable.utils import processtools as misc
 
@@ -22,15 +23,6 @@ pd.set_option('display.width', 150)
 # Add to system path
 sys.path.append(sysenv.get("ALM_DIR"))
 
-
-# Logging directories:
-MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
-LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
-               'a')  # Append to the existing logfile, or create a new one
-
-import os
-from typing import Union
 
 
 def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
@@ -102,9 +94,9 @@ def read_specific_solutions(excel_file_path: str) -> dict:
 
 
 # Generalized function for optimization
-def process_asset_type(asset_type, KRDs, GivenDate):
+def process_asset_type(asset_type, KRDs, GivenDate, LOGFILE):
     misc.log(f"Optimizing {asset_type}", LOGFILE)
-    solution = model_portfolio.optimization(KRDs, GivenDate, asset_type=asset_type)
+    solution = model_portfolio.optimization(KRDs, GivenDate, LOGFILE, asset_type=asset_type)
     print(f"Successfully optimized: {asset_type}")
     return solution
 

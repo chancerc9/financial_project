@@ -17,15 +17,14 @@ Side effects:
     It is "safe" to be ran as many times as warranted.
 """
 
+import datetime
 # Standard library imports
 import os
 import sys
-import datetime
 
 # Third-party imports
 import pandas as pd
 # Local application-specific imports
-from equitable.db.psyw import SmartDB
 from equitable.infrastructure import sysenv
 from equitable.utils import processtools as misc
 
@@ -185,7 +184,7 @@ def main():  # model_portfolio.py new version
             # Process only the specified conditions
             for asset_type, condition in mask.items():
                 if condition:
-                    solutions[asset_type] = helpers.process_asset_type(asset_type, KRDs, GivenDate)
+                    solutions[asset_type] = helpers.process_asset_type(asset_type, KRDs, GivenDate, LOGFILE)
                     """
                     misc.log(f"Optimizing {asset_type}", LOGFILE)
                     solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)

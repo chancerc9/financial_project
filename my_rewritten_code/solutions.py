@@ -12,7 +12,6 @@ import sys
 import numpy as np
 import pandas as pd
 # Local application-specific imports
-from equitable.db.psyw import SmartDB
 from equitable.infrastructure import sysenv
 from equitable.utils import processtools as misc
 from scipy.optimize import minimize
@@ -26,22 +25,6 @@ import file_utils as file_utils
 
 # Configure pandas display settings
 pd.set_option('display.width', 150)
-
-# Database connections (Benchmark, Bond, and General)
-# BM_conn = SmartDB('Benchmark')
-#BM_cur = BM_conn.con.cursor()
-
-#Bond_conn = SmartDB('Bond')
-#Bond_cur = Bond_conn.con.cursor()
-
-#General_conn = SmartDB('General')
-#General_cur = General_conn.con.cursor()
-
-# Logging directories:
-MY_LOG_DIR = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'logs', 'brenda')
-os.makedirs(MY_LOG_DIR, exist_ok=True)  # Create directories if they don't exist
-LOGFILE = open(os.path.join(MY_LOG_DIR, 'benchmarking_log.txt'),
-               'a')  # Append to the existing logfile, or create a new one
 
 ## Start of Model Portfolio code: ##
 
@@ -211,7 +194,7 @@ Functions that *may* mutate things.
 """
 
 
-def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type='public', sheet_version=1):
+def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, asset_type='public', sheet_version=1):
     KRDs = AssetKRDsTable.copy()
 
     df_public, df_private, df_mortgages = reading_asset_mix(given_date, sheet_version)
@@ -481,20 +464,22 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, asset_type
     return solution_df
 
 
-def optimization(KRDs: pd.DataFrame, given_date: dt, asset_type='public'):
+def optimization(KRDs: pd.DataFrame, given_date: dt, LOGFILE, asset_type='public'):
     """
     Wrapper function for optimization; provide given KRDs or have optimization worker function call KRD function.
 
-    Optim worker function creates a copy of KRDs for no propogation of changes.
+    Passes down LOGFILE for logging purposes.
+
+    optimization_worker function creates a copy of KRDs for prevention of the propogation of changes.
     """
 
     # Obtain optimized solution dfs:
     # Does NOT modify the reference of KRDs.
 
     # Segments:
-    sol_df_seg = optimization_worker(KRDs, given_date, asset_type, sheet_version=1)  # segments = 1
+    sol_df_seg = optimization_worker(KRDs, given_date, LOGFILE, asset_type, sheet_version=1)  # segments = 1
     # Totals:
-    sol_df_tot = optimization_worker(KRDs, given_date, asset_type, sheet_version=0)  # totals = 0
+    sol_df_tot = optimization_worker(KRDs, given_date, LOGFILE, asset_type, sheet_version=0)  # totals = 0
 
     def overwrite_total_rows(sol_df_seg, sol_df_tot):
         """
