@@ -23,8 +23,7 @@ pd.set_option('display.width', 150)
 # Add to system path
 sys.path.append(sysenv.get("ALM_DIR"))
 
-
-
+# --- helper function ---
 def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
     """
     Constructs a directory path from the given segments and ensures that the directory exists.
@@ -42,9 +41,10 @@ def build_and_ensure_directory(*path_segments: Union[str, bytes]) -> str:
     os.makedirs(directory_path, exist_ok=True)
     return directory_path
 
-# For Model Portfolio code:
 
 
+# --- Read in solutions file for producing model portfolio cashflows and benchmark_tables from, if selected in configuration,
+#     chosen pre-existing solutions: ---
 def read_specific_solutions_old(excel_file_path: str) -> dict:
     """
     Reads the 'public_solution', 'mortgage_solution', and 'private_solution' sheets
@@ -93,15 +93,17 @@ def read_specific_solutions_old(excel_file_path: str) -> dict:
     return solutions
 
 
-# Generalized function for optimization
+
+# --- General functions for Model Portfolio process (create and output solutions.xlsx): ---
+
+# Generalized wrapper function for optimization processes
 def process_asset_type(asset_type, KRDs, GivenDate, LOGFILE):
     misc.log(f"Optimizing {asset_type}", LOGFILE)
     solution = model_portfolio.optimization(KRDs, GivenDate, LOGFILE, asset_type=asset_type)
     print(f"Successfully optimized: {asset_type}")
     return solution
 
-
-# Generalized function for writing solutions.xlsx to Excel
+# Generalized helper function for writing solutions.xlsx to Excel
 def write_solutions_to_excel(solutions, solutions_path, KRDs, GivenDate):
     if not os.path.exists(solutions_path):
         with pd.ExcelWriter(solutions_path) as writer:

@@ -96,7 +96,7 @@ The function aggregates per portfolio and rating.
         asset_mix = df_mortgage
     else:
         asset_mix = df_public
-    asset_mix.rename(columns=portfolio_map, inplace=True)
+    asset_mix.rename(columns=portfolio_map, inplace=True) # Future suggestion: possible suggestion to have renaming outside, as a wrapper function, if this is done.
 
     # Prepare the cashflow data for each rating
     cf = helpers.create_cf_tables(FTSE_Universe_data)
@@ -111,7 +111,7 @@ The function aggregates per portfolio and rating.
 
     cur_date = given_date.strftime('%Y%m%d')
 
-    # This function can now use the variables defined above ha.
+    # This function can now use the variables defined above.
     def write_debug_file(df: pd.DataFrame, file_name: str, subdir='benchmarking_tables', cur_date = given_date.strftime('%Y%m%d')):
     # if debug:
         import helpers as helper_function
@@ -136,7 +136,6 @@ The function aggregates per portfolio and rating.
         portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index(
                 'rating').drop(columns='portfolio')
 
-
         # Isolate the solution weights for this portfolio, adjusting by asset type and rating
         for rating in rating_tuple:
 
@@ -156,16 +155,17 @@ The function aggregates per portfolio and rating.
                 summed_cfs[rating] = 0
                 continue
 
-            """part of new code, can fix by Shock class and retrieve for Curve etc"""
+            """retrieves the present value of curves, can implement Shock class and retrieve PV for Curve etc"""
             ups = shock_tables[rating + ' - Up']    # Can also be " - Down" ; just specific to the RATING not the up/down
             pv_bond_curve = ups.iloc[:, 0]          # Retrieves the present value of curves.
-            """ end of new code"""
+            """ end of possible future suggestion for clarity"""
 
             # Extract 70x70 CF matrix (skipping first 3 columns)
             cfs_rating_df = cf[rating].iloc[:, 3:]  # Shape: (70, 70) where
                                                     # (rows: buckets, columns: term_intervals (time))
 
-            # Arrays or scalars (numpy): vectorized calculations where possible.
+
+            # Arrays or scalars (numpy): vectorized calculations where possible. #
             pv_array = cf[rating + 'PV'].values # Shape: (70,)
 
 
@@ -180,7 +180,7 @@ The function aggregates per portfolio and rating.
             # Can print actual PV if wished
             # print(pv_array)
 
-            # Write to excel
+            # Write to excel:
             if debug:
 
                 file_name = f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx'
@@ -191,7 +191,7 @@ The function aggregates per portfolio and rating.
                 write_debug_file(pv_array_df, file_name, subdir, cur_date)
             # end of write to excel.
 
-            # green code (for testing - can change other code if similarity exist):
+            # green code (for testing - is used elsewhere in program - can change the other code if similarity exist):
                 # pv_array = np.sum(cf[rating].iloc[i, 3:] * ups.iloc[:, 0])  # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values; of discounted curves
                 # average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / pv
 
@@ -205,7 +205,8 @@ The function aggregates per portfolio and rating.
 
 
 
-            # Dataframes: Cashflow calculations
+            # Dataframes: Cashflow calculations #
+
 
             # 2. Scale cfs down by PV:
             cfs_rating_df = cfs_rating_df.div(pv_array, axis=0) # Applies pv_array on the columns of cfs_rating_df
@@ -218,7 +219,9 @@ The function aggregates per portfolio and rating.
             # (rows: buckets (70), columns: buckets (intervals))
             #  values: percentage of each bucket 70 in the bucket 6 intervals.
 
-            # Remember that A @ B applies the columns of B on the rows of A to produce the column elements of C (result)
+            # Code note:
+                # Remember that A @ B applies the columns of B on the rows of A to produce the column elements of C (result)
+
 
 
             # 3. Apply weight transformation to cfs to aggregate into 6 buckets (result: 70 time, 6 buckets, values cfs):
@@ -235,6 +238,7 @@ The function aggregates per portfolio and rating.
             # Cashflows in 6 buckets divided by PV
             cfs_aggregated_6_buckets = np.nan_to_num(cfs_condensed_numpy, nan=0.0) # Shape: (time: 70, buckets: 6) for (row, col)
 
+            # Write to excel:
             if debug:
 
                 # 4. Print or write to excel for PV adjusted CFs aggregated in 6 buckets
@@ -244,6 +248,7 @@ The function aggregates per portfolio and rating.
                 subdir = 'benchmarking_outputs'
 
                 write_debug_file(debug_df, file_name, subdir, cur_date)
+            # end of debugging.
 
 
             # 5. Perform a SUMPRODUCT of matrix and solutions on correct dimensions
@@ -258,12 +263,12 @@ The function aggregates per portfolio and rating.
 
 
             # Shape: (70,) as required
+                # Equivalent, for code tests:
                 # final_CFs_rating_arr = np.nan_to_num((cfs_rating_df.values.T @ weights_df.values), nan=0.0) @ np.nan_to_num(sol_scaled_mv, nan=0.0)
-            final_CFs_rating_arr = cfs_aggregated_6_buckets @ sol_scaled_mv # thanks, braodcasting, for applying array across the cols (it broadcasts array to be a col here from matrix # 2)
+            final_CFs_rating_arr = cfs_aggregated_6_buckets @ sol_scaled_mv # Thanks, braodcasting, for applying array across the cols (it broadcasts array to be a col here from matrix # 2)
             # Note that portfolio_solution for NONPAR portfolio and Federal rating is 0, so that this is 0 as well - could put a condition that checks for this rather
-            #  than doing all the operation? e.g., if portfolio_solution = 0, then continue (skip) with the 0 final cfs
+                # than doing all the operation? e.g., if portfolio_solution = 0, then continue (skip) with the 0 final cfs
             # NOTE: final_CFs final_CFs_rating_arr are in semi_annual payments across 70 terms for a rating (so an array)
-
 
 
             # Generate half-year dates starting from given_date + 6 months
@@ -298,6 +303,7 @@ The function aggregates per portfolio and rating.
     return summed_cfs_dict
 
 
+
 def create_summary_table(given_date, asset_type='public'):
     """
     For creating the summary_portfolio sheets of
@@ -305,7 +311,7 @@ def create_summary_table(given_date, asset_type='public'):
 
     '''This function is currently used for creating the summary tables, which only contain info about the portfolio balances.'''
     """
-    df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date) # TODO! Creates new one - can decouple out
+    df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date) # TODO! Creates new one - can decouple out and make a copy (same thing as creating anew)
 
     if asset_type == 'private':
         asset_mix = df_private
@@ -378,11 +384,11 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
             ftse_data['Benchmark ' + portfolio + ' weight'] = 0
             continue
 
-        # Renaming only corpBBBs for mortgage because corpA and AAA_AAs not included:
+        # Reformat data as a copy benchmarking solution (.loc creates a copy):
         if asset_type == 'mortgage':
-            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating').drop(columns='portfolio').rename(index={'corporateBBB': 'CorporateBBB'})
+            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating').drop(columns='portfolio') # .rename(index={'corporateBBB': 'CorporateBBB'})  # Old code: Renaming only corpBBBs for mortgage because corpA and AAA_AAs not included:
         else:
-            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating').drop(columns='portfolio').rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'})
+            portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating').drop(columns='portfolio') # .rename(index={'corporateAAA_AA': 'CorporateAAA_AA', 'corporateA': 'CorporateA', 'corporateBBB': 'CorporateBBB'}) => renamed earlier in the code
 
         benchmark_weights = portfolio_solution.mul(asset_mix[portfolio], axis=0)
         benchmark_weights = benchmark_weights / asset_mix[portfolio].sum()
@@ -418,4 +424,3 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
     ftse_data['Benchmark dollar investment'] = ftse_data['Benchmark TOTAL weight'] * total_dollar_amount
 
     return ftse_data
-

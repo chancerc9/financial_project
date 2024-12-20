@@ -1,7 +1,9 @@
 """
-    This provided code is a complex script that processes bond-related data, 
-    calculates key rate durations (KRDs), and uploads the resulting sensitivities 
-    to a database. 
+    This provided code is a financial script that processes bond-related data,
+    calculates key rate durations (KRDs), and runs an optimization script for asset-liability
+    matching - see specific function comments for most up-to-date and accurate descriptions - and expected returns
+    optimization (for totals). This produces the percent allocations for investing in a model portfolio - used for
+    investment benchmarking purposes.
 """
 # Standard library imports
 import datetime as dt
@@ -14,7 +16,6 @@ import pandas as pd
 from scipy import interpolate
 import openpyxl
 from typing import List
-
 
 # Local application-specific imports
 from equitable.infrastructure import sysenv
@@ -33,18 +34,22 @@ import helpers as function_helpers
 # Configure pandas display settings
 pd.set_option('display.width', 150)
 
-## Start of Model Portfolio code: ##
+
+# --- Start of Model Portfolio code: ---
 
 """
+1. Create Asset KRDs
+
+Function: create_AssetKRDs()
+
+Create Asset KRDs to be used in optimization procedure below.
+
 Mutates: Nothing
 
 Side effects: 
-- calls make_krd_table() to create 6 bucket KRDs from 70 bucket KRDs (sensitivities), using weights to scale and allocate them.
-- this function does *not* mutate/alter/change the original bond_curves dataframe reference, nor any further changes to replicates.
-
+    - calls make_krd_table() to create 6 bucket KRDs from 70 bucket KRDs (sensitivities), using weights to scale and allocate them.
+    - this function does *not* mutate/alter/change the original bond_curves dataframe reference, nor any further changes to replicates.
 """
-
-
 def create_AssetKRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
                        GivenDate: pd.Timestamp, debug=False) -> pd.DataFrame: # DEBUGGING_DIRECTORY: str=None,
     """
@@ -139,15 +144,16 @@ def create_AssetKRDs(const_bond_curves: pd.DataFrame, ftse_data: pd.DataFrame,
 
 
 """
-Mutates: Nothing
-Helper that create_asset_KRDs(ftse_data, GivenDate) relies on.
-"""
-"""
-To determine the asset types per segment, multiply the segment balance by the asset mix percentage that is unique to each
-segment. This percentage matrix is called the "Asset Mix.xlsx" file, where the segment balances and total asset balance is 
-called the "SBS Totals.xlsx" file.
-"""
+Function: reading_asset_mix()
+    Helper that create_asset_KRDs(ftse_data, GivenDate) relies on.
 
+Mutates: Nothing
+
+Information:
+    To determine the asset types per segment, multiply the segment balance by the asset mix percentage that is unique to each
+    segment. This percentage matrix is called the "Asset Mix.xlsx" file, where the segment balances and total asset balance is 
+    called the "SBS Totals.xlsx" file.
+"""
 # Should be called: create asset_mix
 def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -164,11 +170,12 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
         - df_private: Private assets.
         - df_mortgages: Mortgages.
     """
-    # --- Get source data ---
+
+    # --- Get Source Data ---
 
     # Assumptions:
-    # 'SBS Totals.xlsx': Aggregated segment and total balances, for company assets.
-    # 'Asset Mix.xlsx': Percentage matrix contains the percents for ratings (rows) per segment (columns), for company assets.
+        # 'SBS Totals.xlsx': Aggregated segment and total balances, for company assets.
+        # 'Asset Mix.xlsx': Percentage matrix contains the percents for ratings (rows) per segment (columns), for company assets.
 
     # Obtain balance sheet aggregated totals or aggregated segment totals for all equitable assets:
     totals = datahandler.get_BSTotals(Given_date, sheet_version) # sheet_version = 1 for segments, sheet_version = 0 for totals
@@ -177,12 +184,14 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
     weights = datahandler.get_percents(Given_date)
     weights = weights[['ACCUM', 'PAYOUT', 'UNIVERSAL', 'NONPAR', 'GROUP', 'PARCSM', 'Total', 'Surplus', 'SEGFUNDS']]
 
-    # --- Pre-process source data ---
+
+    # --- Pre-process Source Data ---
 
     # Remove columns where every entry of the column is NaN:
     weights = weights.dropna(axis=1, how='all')
 
-    # --- Calculate results ---
+
+    # --- Calculate Results ---
 
     # Multiply the balance by asset percents of segments to get asset mix:
     df = weights.multiply(pd.Series(totals))
@@ -192,7 +201,8 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
     df.rename(columns={'ACCUM': 'Accum', 'PAYOUT': 'Payout', 'GROUP': 'group', 'UNIVERSAL': 'ul', 'NONPAR': 'np'},
               inplace=True)
 
-    # --- Split results into private, mortgage, and public tables and rename for convention ---
+
+    # --- Split results into private, mortgage, and public tables, and rename for convention ---
 
     # Split into public, private, and mortgage tables, defining them (as per ALM team):
 
@@ -203,7 +213,7 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
 
     # Privates are modelled with CorpA and CorpAAA bonds (as private assets DNE in FTSE Universe):
     df_private = df.iloc[5:11].drop(columns=['SEGFUNDS']) # .drop() explicitly creates a new df, hence, avoiding
-                                                          # ambiguity or warnings for/from Pandas
+                                                          # ambiguity or warnings from Pandas.
     df_private.rename({'PrivateAA': 'CorporateAAA_AA', 'PrivateA': 'CorporateA', 'PrivateBBB': 'CorporateBBB',
                        'MortgagesInsured': 'Federal'}, inplace=True)
 
@@ -217,19 +227,29 @@ def reading_asset_mix(Given_date: pd.Timestamp, sheet_version: int = 1) -> tuple
 
     return df_public, df_private, df_mortgages
 
-"""
-Function that reads in input.
-"""
+
 
 """
-Functions that *may* mutate things.
+2. 
+
+Purpose:
+Brings in liability sensitivities (from the ALM, liabilities team) and performs an asset-liability matching and an
+optimization procedure to produce asset allocation percentages for a portfolio model used in benchmarking.
+
+Functions: 
+optimization() is a wrapper for bringing the separate optimization procedures together (can merge if function weights or 
+                calculation changes to reflect excel)
+optimization_worker() performs segment level and total portfolio level (with segment weights of 1) optimization on 
+                asset and liability sensitivities to create a portfolio model (outputs as solutions.xlsx, 
+                Model Portfolio; used for benchmarking in Custom_benchmarks.xlsx, and to generate the model portfolio 
+                cashflows from solutions).
+
+These are functions that *may* mutate things. 
+
+Overview: 
+    Performs optimization calculation, including asset-liability sensitivity matching
+    and optimizing expected returns for totals (using segment weights of 1, for the totals portfolio).  
 """
-
-
-
-
-
-
 def optimization(AssetKRDs: pd.DataFrame, given_date: dt, LOGFILE, asset_type='public'):
     """
     Purpose:
@@ -596,6 +616,9 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, a
     return solution_df
 
 
+"""
+Functions that read in input (see comments), supporting optimization functions.
+"""
 # --- input files ---
 
 def get_expected_returns() -> pd.DataFrame:
