@@ -1,11 +1,12 @@
 """
-Name:
+Name: cashflows_and_benchmark_tables.py
+
+    legacy: similar to Generate_benchmarking_tables.py
 
 Purpose:
-
+    Generates the cashflows from solutions and custom_benchmarks file used for benchmarking processes by ALM or investment tech.
 
 Functions:
-
 
 Side effects:
 
@@ -19,48 +20,7 @@ pd.set_option('display.width', 150)
 from equitable.infrastructure import sysenv
 
 import calculations as helpers
-import solutions as bench
-
-
-
-# Generate_benchmarking_tables.py
-
-
-
-
-# class bond curves, all to do wiht the curves - so accumulate functions together and use same attributes - items
-
-# so i know its the PV of CURVES
-# maybe should inherit shocks but / or keep it simple for now (simplify first, that consider later)
-# use inheritance for this (to hide it)
-"""
-class Curves:
-    def __init__(self, GivenDate: pd.dt):
-       self.GivenDate = GivenDate
-    def get_pv(self):
-"""
-"""
-class Curves:
-    
-    #>>> bond_curves = Curves()
-    #>>> pv = bond_curves.get_pv()
-    #>>> print(pv.type)
-    #>>> print(pv.shape)
-    #>>> print(pv)
-        # Class attr: less common, don't necessarily do - more mem? curve_pv = None
-    def __init__(self):
-    # self.GivenDate = GivenDate
-        self.curve_pv = None
-    def get_pv(self):
-        if self.curve_pv is None:
-            pv = helpers.create_general_shock_table()
-            self.curve_pv = pv[0]
-            return self.curve_pv
-        else:
-            return self.curve_pv
-"""
-
-
+import solutions as model_portfolio
 
 
 def create_summed_cashflow_tables(bond_curves: pd.DataFrame,
@@ -70,7 +30,6 @@ def create_summed_cashflow_tables(bond_curves: pd.DataFrame,
                                   given_date: dt,
                                   asset_type='public',
                                   debug=False):
-
     """
     Creates cashflows from solutions.
 
@@ -116,22 +75,21 @@ The function aggregates per portfolio and rating.
     rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
 
     benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
-    # benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
     benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map) # In place.
     benchmarking_solution['rating'] = benchmarking_solution['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
 
     # External helpers assumed:
-    # helpers.create_weight_tables(FTSE_Universe_data) -> (weights, totals)
-    # helpers.create_shock_tables(bond_curves, given_date, debug) -> shock_tables
-    # helpers.create_cf_tables(FTSE_Universe_data) -> cf (dict of rating->DataFrame)
-    # assets.reading_asset_mix(given_date) -> (df_public, df_private, df_mortgage)
+    #   helpers.create_weight_tables(FTSE_Universe_data) -> (weights, totals)
+    #   helpers.create_shock_tables(bond_curves, given_date, debug) -> shock_tables
+    #   helpers.create_cf_tables(FTSE_Universe_data) -> cf (dict of rating->DataFrame)
+    #   assets.reading_asset_mix(given_date) -> (df_public, df_private, df_mortgage)
 
     # Load necessary weights, shocks, cashflows and asset mix information
     weights, totals = helpers.create_weight_tables(FTSE_Universe_data)
     shock_tables = helpers.create_shock_tables(bond_curves, given_date, debug) # Shock can be a class inherited by Curves or vice versa.
 
     # Load asset mix for the specified asset type and adjust names if needed:
-    df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date)
+    df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date)
     if asset_type == 'private':
         asset_mix = df_private
     elif asset_type == 'mortgage':
@@ -166,6 +124,7 @@ The function aggregates per portfolio and rating.
 
 
     summed_cfs_dict = {}
+
     for portfolio in portfolio_tuple:
 
         # Initialize DataFrames to hold summed cashflows and carry data for each asset, for this portfolio
@@ -181,10 +140,13 @@ The function aggregates per portfolio and rating.
         # Isolate the solution weights for this portfolio, adjusting by asset type and rating
         for rating in rating_tuple:
 
-            # If rating not applicable for this asset type and portfolio combination, skip
+            # If rating not applicable for this asset type and portfolio combination, skip.
 
-            # not in is equivalent to not(A or B) which is (not A and not B) where [A, B] implies [A or B] when interpreted with not in or in
-            # hence 'in' is equivalent to in (A or B) for this language.
+            # Code notes:
+                # 'not in' is equivalent to not(A or B) which is (not A and not B) where [A, B] implies [A or B] when
+                # interpreted with not in or in
+                # hence 'in' is equivalent to in (A or B) for this language.
+
             if (
                 (asset_type == 'mortgage' and ((portfolio == 'UNIVERSAL') or (rating not in ['Federal', 'CorporateBBB']))) or
                 (asset_type == 'private' and (rating in ['Federal', 'Provincial']))
@@ -195,29 +157,31 @@ The function aggregates per portfolio and rating.
                 continue
 
             """part of new code, can fix by Shock class and retrieve for Curve etc"""
-            ups = shock_tables[rating + ' - Up'] # Can also be down lmao; just specific to the RATING not the up/down
-            pv_bond_curve = ups.iloc[:, 0] # Retrieves the present value of curves.
+            ups = shock_tables[rating + ' - Up']    # Can also be " - Down" ; just specific to the RATING not the up/down
+            pv_bond_curve = ups.iloc[:, 0]          # Retrieves the present value of curves.
             """ end of new code"""
 
             # Extract 70x70 CF matrix (skipping first 3 columns)
-            cfs_rating_df = cf[rating].iloc[:, 3:] # Shape: (70, 70) where
-            # (rows: buckets, columns: term_intervals (time))
+            cfs_rating_df = cf[rating].iloc[:, 3:]  # Shape: (70, 70) where
+                                                    # (rows: buckets, columns: term_intervals (time))
 
-            # Arrays or scalars (numpy)
+            # Arrays or scalars (numpy): vectorized calculations where possible.
             pv_array = cf[rating + 'PV'].values # Shape: (70,)
 
-            # Perform element-wise multiplication and then sum along the rows
-            # # pv_vectorized = (cashflows_selected * ups.iloc[:, 0].values).sum(axis=1) # vectorized equivalent to green code
-            # # pv_vectorized = (cfs_rating_df * ups.iloc[:, 0].values).sum(axis=1)  # vectorized equivalent to green code
-            # keep:
-            # pv_bond_curve = ups.iloc[:, 0]
+
+
+            # Perform element-wise multiplication and then sum along the rows to obtain an array of present value of cashflows for each bucket for this rating.
             pv_vectorized = cfs_rating_df.values @ ups.iloc[:, 0].values
-            pv_array = pv_vectorized # Shape: (70,) -  as needed.
+                                        # Equivalent code for testing:
+                                        # pv_vectorized = (cashflows_selected * ups.iloc[:, 0].values).sum(axis=1) # vectorized equivalent to green code
+                                        # pv_vectorized = (cfs_rating_df * ups.iloc[:, 0].values).sum(axis=1)  # vectorized equivalent to green code
+            pv_array = pv_vectorized # Shape: (70,) as needed.
+
             # Can print actual PV if wished
             # print(pv_array)
 
-            # write to excel
-            if debug: # change the function to convert it to vector, else, take out the if debug within function
+            # Write to excel
+            if debug:
 
                 file_name = f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx'
 
@@ -225,29 +189,21 @@ The function aggregates per portfolio and rating.
 
                 pv_array_df = pd.DataFrame(pv_array)
                 write_debug_file(pv_array_df, file_name, subdir, cur_date)
+            # end of write to excel.
 
-
-
-                # """temp comment out
-                #file_path = os.path.join(path, f'{rating}_pv_actuals_of_cfs_{cur_date}.xlsx')
-                #if not os.path.exists(file_path):
-                #    with pd.ExcelWriter(file_path) as writer:
-                #        pv_array_df.to_excel(writer, sheet_name='Sheet1', index=False)  # Rows are payments, cols are buckets
-            # """
-            # end of write to excel
-
-            # green code:
-            #pv_array = np.sum(cf[rating].iloc[i, 3:] * ups.iloc[:, 0])  # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values; of discounted curves
-            #average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / pv
+            # green code (for testing - can change other code if similarity exist):
+                # pv_array = np.sum(cf[rating].iloc[i, 3:] * ups.iloc[:, 0])  # it selects the row, nice (row, which are a bucket) - and ups.iloc[:,0] holds the PV values; of discounted curves
+                # average_sensitivity.iloc[x, i + 1] = avg_sensitivity.iloc[x, i + 1] / pv
 
             solutions_values = portfolio_solution.loc[rating].values # Shape: (6,)
-            market_value = asset_mix.loc[rating, portfolio] # Shape: ()
+            market_value = asset_mix.loc[rating, portfolio]          # Shape: ()
 
             # 1. Scale solutions up by market_value (PV of solutions):
             sol_scaled_mv = market_value * solutions_values # Shape: (6,), can be array of 0s
             # where (weights for 6 buckets array)
-
             sol_scaled_mv = np.nan_to_num(sol_scaled_mv, nan=0.0)
+
+
 
             # Dataframes: Cashflow calculations
 
@@ -264,13 +220,14 @@ The function aggregates per portfolio and rating.
 
             # Remember that A @ B applies the columns of B on the rows of A to produce the column elements of C (result)
 
+
             # 3. Apply weight transformation to cfs to aggregate into 6 buckets (result: 70 time, 6 buckets, values cfs):
 
             # cfs_rating_df.T has shape of (time: 70, buckets: 70)
             # Aggregates the 70 buckets into 6 buckets
 
-            # can have PV actuals (pv of cashflows) written to excel and the ftse pvs#  TODO!:
-
+            # Future suggestion:
+            # can have PV actuals (pv of cashflows) written to excel and the ftse pvs #
 
             cfs_condensed_numpy = cfs_rating_df.values.T @ weights_df.values # Shape: (time: 70, buckets: 6)
             # (time: 70, buckets: 6)
@@ -279,38 +236,32 @@ The function aggregates per portfolio and rating.
             cfs_aggregated_6_buckets = np.nan_to_num(cfs_condensed_numpy, nan=0.0) # Shape: (time: 70, buckets: 6) for (row, col)
 
             if debug:
+
                 # 4. Print or write to excel for PV adjusted CFs aggregated in 6 buckets
                 debug_df = pd.DataFrame(cfs_aggregated_6_buckets)
 
                 file_name = f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx'
                 subdir = 'benchmarking_outputs'
 
-                write_debug_file(debug_df, file_name, subdir, cur_date) # but anyway, reduce functionality for function is good
+                write_debug_file(debug_df, file_name, subdir, cur_date)
 
-                #path = os.path.join(sysenv.get('PORTFOLIO_ATTRIBUTION_DIR'), 'Benchmarking', 'Test', 'benchmarking_outputs',
-                #                    'Brenda', 'benchmarking_tables', cur_date)
-                #os.makedirs(path, exist_ok=True)
 
-                #"""temp comment out
-                #file_path = os.path.join(path, f'{rating}_CFs_divided_by_PV_w_row_time_col_6_buckets{cur_date}.xlsx')
-                #if not os.path.exists(file_path):
-                #    with pd.ExcelWriter(file_path) as writer:
-                #        cfs_condensed_df.to_excel(writer, sheet_name='Sheet1', index=False)   # Rows are payments, cols are buckets
-            #"""
             # 5. Perform a SUMPRODUCT of matrix and solutions on correct dimensions
 
-            # matrix * array performs PRODUCT of array on buckets of matrix - applies on each row
-            # then, matrix @ array performs SUMPRODUCT (it completes the sum across the cols, or of each row, step after it)
-            # (so, the second performs the summation or dot product across each row)
+            # Notes:
+                # matrix * array performs PRODUCT of array on buckets of matrix - applies on each row
+                # then, matrix @ array performs SUMPRODUCT (it completes the sum across the cols, or of each row, step after it)
+                # (so, the second performs the summation or dot product across each row)
 
-            # cfs_aggregated_6_buckets has (time, buckets) and sol_scaled_mv has (buckets'_weights)
-            # so scales the buckets for solutions :) across the cashflow times
+                # cfs_aggregated_6_buckets has (time, buckets) and sol_scaled_mv has (buckets'_weights)
+                # so scales the buckets for solutions :) across the cashflow times.
+
 
             # Shape: (70,) as required
-            # final_CFs_rating_arr = np.nan_to_num((cfs_rating_df.values.T @ weights_df.values), nan=0.0) @ np.nan_to_num(sol_scaled_mv, nan=0.0)
+                # final_CFs_rating_arr = np.nan_to_num((cfs_rating_df.values.T @ weights_df.values), nan=0.0) @ np.nan_to_num(sol_scaled_mv, nan=0.0)
             final_CFs_rating_arr = cfs_aggregated_6_buckets @ sol_scaled_mv # thanks, braodcasting, for applying array across the cols (it broadcasts array to be a col here from matrix # 2)
             # Note that portfolio_solution for NONPAR portfolio and Federal rating is 0, so that this is 0 as well - could put a condition that checks for this rather
-            #  than doing all the operation? e.g., if portfolio_solution = 0, then continue (skip) with the 0 final cfs lol
+            #  than doing all the operation? e.g., if portfolio_solution = 0, then continue (skip) with the 0 final cfs
             # NOTE: final_CFs final_CFs_rating_arr are in semi_annual payments across 70 terms for a rating (so an array)
 
 
@@ -346,10 +297,16 @@ The function aggregates per portfolio and rating.
 
     return summed_cfs_dict
 
-# For the Custom Benchmarks
-''' This function is currently used for creating the summary tables, which only contain info about the portfolio balances '''
+
 def create_summary_table(given_date, asset_type='public'):
-    df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date)
+    """
+    For creating the Custom Benchmarks (custom_benchmarks.xlsx) used in performance benchmarking processes by the ALM team.
+
+    Old comments:
+        This function is currently used for creating the summary tables, which only contain info about the portfolio balances.
+    """
+    df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date) # TODO! Creates new one - can decouple out
+
     if asset_type == 'private':
         asset_mix = df_private
     elif asset_type == 'mortgage':
@@ -367,21 +324,31 @@ def create_summary_table(given_date, asset_type='public'):
     return df
 
 
-''' In this function the indexData tables are created. These are essentially the ftse constituents table but with added columns with the weights for each portfolio '''
 def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, asset_type='public'):
+    """
+    In this function the indexData tables are created. These are essentially the ftse constituents table
+    but with added columns with the weights for each portfolio.
+    """
+    portfolio_map = {
+        'Total': 'TOTAL',
+        'np': 'NONPAR',
+        'group': 'GROUP',
+        'Accum': 'ACCUM',
+        'Payout': 'PAYOUT',
+        'ul': 'UNIVERSAL',
+        'Surplus': 'SURPLUS'
+    }
+    rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
+
     benchmarking_solution = solution_df.copy()
-    benchmarking_solution.rename(columns={5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}, inplace=True)
-    benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace({'Total': 'TOTAL',
-                                                                                     'np': 'NONPAR',
-                                                                                     'group': 'GROUP',
-                                                                                     'Accum': 'ACCUM',
-                                                                                     'Payout': 'PAYOUT',
-                                                                                     'ul': 'UNIVERSAL',
-                                                                                     'Surplus': 'SURPLUS'})
+
+    benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
+    benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map)
+
 
     weights, totals = helpers.create_weight_tables(ftse_data)
 
-    df_public, df_private, df_mortgage = bench.reading_asset_mix(given_date)
+    df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date) # TODO! Creates new one
 
     if asset_type == 'private':
         asset_mix = df_private
@@ -402,7 +369,8 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
         if (asset_type == 'mortgage') & (portfolio == 'UNIVERSAL'):
             ftse_data['Benchmark ' + portfolio + ' weight'] = 0
             continue
-        # Renaming only corpBBBs for mortgage because corpA and AAA_AAs not included
+
+        # Renaming only corpBBBs for mortgage because corpA and AAA_AAs not included:
         if asset_type == 'mortgage':
             portfolio_solution = benchmarking_solution.loc[benchmarking_solution['portfolio'] == portfolio].set_index('rating').drop(columns='portfolio').rename(index={'corporateBBB': 'CorporateBBB'})
         else:
@@ -441,7 +409,5 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
                                                                              'Benchmark UNIVERSAL weight']] * individual_portfolio_sums.values))/surplus_portfolio_balance, axis=1)
     ftse_data['Benchmark dollar investment'] = ftse_data['Benchmark TOTAL weight'] * total_dollar_amount
 
-
     return ftse_data
-
 

@@ -313,7 +313,7 @@ def read_specific_solutions(GivenDate, cur_date) -> dict:
 """Reads in assets"""
 
 # Reads in asset totals from SBS_totals.xlsx
-def BSTotals(given_date: datetime, sheet_version: int) -> dict:
+def get_BSTotals(given_date: datetime, sheet_version: int) -> dict:
     """
     Retrieves the balance sheet totals from the "SBS Totals.xlsx" file based on the provided date.
 
@@ -359,7 +359,7 @@ def BSTotals(given_date: datetime, sheet_version: int) -> dict:
 
 
 # Asset mix.xlsx reading in function
-def percents(given_date: datetime) -> pd.DataFrame:
+def get_percents(given_date: datetime) -> pd.DataFrame:
     """
     Retrieves asset mix percentages from the "Asset Mix.xlsx" file for the given date.
 

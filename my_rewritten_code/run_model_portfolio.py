@@ -140,8 +140,7 @@ def main():  # model_portfolio.py new version
         # misc.log('Step 2: Create 70 bucket cashflows and calculate asset KRDs from excel inputs', LOGFILE)
 
         # 2.1. Create 70 bucket cashflows from a copy of FTSE data and create 6 bucket KRDs from cashflows:
-        KRDs = model_portfolio.reading_asset_KRDs(bond_curves, ftse_handler.data,
-                                                  GivenDate, args.debug)  # sensitivities variable is 70 bucket KRDs
+        KRDs = model_portfolio.create_AssetKRDs(bond_curves, ftse_handler.data, GivenDate, args.debug)  # sensitivities variable is 70 bucket KRDs
 
         # misc.log('Step 3: Read in liability KRDs from excel inputs; optimize asset KRDs and liability KRDs; output to a solutions.xlsx file', LOGFILE)
 
@@ -195,7 +194,7 @@ def main():  # model_portfolio.py new version
                     solutions[asset_type] = model_portfolio.optimization(KRDs, GivenDate, asset_type)
                     print(f"Successfully optimized: {asset_type}")
                     """
-            print("Successfully ran: solutions")
+            print("Successfully ran: solutions for Model Portfolio")
             # misc.log("Successfully ran: solutions", LOGFILE)
 
             # Write solutions to Excel
