@@ -277,6 +277,39 @@ def optimization(AssetKRDs: pd.DataFrame, given_date: dt, LOGFILE, asset_type='p
 
     sol_df = overwrite_total_rows(sol_df_seg, sol_df_tot)
 
+
+    # Renaming conventions can place here: #TODO! Test
+    #benchmarking_solution = solution_df.copy()
+    #FTSE_Universe_data = FTSE_Universe_data.copy()
+    #ftse_data = IndexTable.copy()
+    #bond_curves = bond_curves.copy()
+
+    # Rename columns and portfolios in benchmarking_solution_df
+    ratings_map = {
+        'Federal': 'Federal',
+        'Provincial': 'Provincial',
+        'corporateAAA_AA': 'CorporateAAA_AA',
+        'corporateA': 'CorporateA',
+        'corporateBBB': 'CorporateBBB'
+    }
+    portfolio_map = {
+        'Total': 'TOTAL',
+        'np': 'NONPAR',
+        'group': 'GROUP',
+        'Accum': 'ACCUM',
+        'Payout': 'PAYOUT',
+        'ul': 'UNIVERSAL',
+        'Surplus': 'SURPLUS'
+    }
+    # Rename columns mapping
+    rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
+
+    sol_df.rename(columns=rename_buckets_map, inplace=True)
+    sol_df['portfolio'] = sol_df['portfolio'].replace(portfolio_map)  # In place.
+    # sol_df['rating'] = sol_df['rating'].str.replace(r'^([a-zA-Z])',lambda m: m.group(1).upper(),regex=True)
+
+    sol_df['rating'] = sol_df['rating'].replace(ratings_map)
+
     return sol_df
 
 
@@ -290,12 +323,14 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, a
     With the current function utility, use 1 for segments and 0 for totals (since total weights of segments should be 1 for calculations).
 
     Simplified the optimization code. Future suggestions include to include appropriate bounds instead of Python clips to bounds.
+
+    Only one asset class is optimized at a time, out of 'public, 'private', 'mortgage'
     """
 
     # Important: Creates a copy of Asset KRDs table.
     KRDs = AssetKRDsTable.copy()
 
-    # Assets
+    # Get assets mix:
     df_public, df_private, df_mortgages = reading_asset_mix(given_date, sheet_version)
 
     ''' Setting Asset_mix to the correct table based on the given asset class '''
@@ -311,12 +346,8 @@ def optimization_worker(AssetKRDsTable: pd.DataFrame, given_date: dt, LOGFILE, a
         Asset_mix = df_public.rename(
             {'CorporateAAA_AA': 'corporateAAA_AA', 'CorporateA': 'corporateA', 'CorporateBBB': 'corporateBBB'})
 
-    # Reads in targets sensitivities to match sols:
-    ''' Separating the db values into 3 tables, one for each asset class '''
-    # private_sensitivity = helpers.private_sensitivities(given_date).set_index(['portfolio', 'rating']) # TODO! commented out, not sure what it did
-    # mortgage_sensitivity = helpers.mortgage_sensitivities(given_date).set_index(['portfolio', 'rating'])
-
-    ''' Setting the sensitivities to be used as targets for the optimizer, for the correct asset class'''
+    # Get target liability sensitivities from excel:
+    ''' Setting the sensitivities to be used as targets for the optimizer, for the chosen asset class'''
     net_sensitivity = datahandler.get_liability_sensitivities(given_date, asset_type)
 
     if asset_type == 'private':

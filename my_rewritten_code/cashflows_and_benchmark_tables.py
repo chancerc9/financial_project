@@ -72,11 +72,11 @@ The function aggregates per portfolio and rating.
         'ul': 'UNIVERSAL',
         'Surplus': 'SURPLUS'
     }
-    rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
+    # rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
 
-    benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
-    benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map) # In place.
-    benchmarking_solution['rating'] = benchmarking_solution['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
+    # benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
+    # benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map) # In place.
+    # benchmarking_solution['rating'] = benchmarking_solution['rating'].str.replace(r'^([a-zA-Z])', lambda m: m.group(1).upper(), regex=True)
 
     # External helpers assumed:
     #   helpers.create_weight_tables(FTSE_Universe_data) -> (weights, totals)
@@ -300,10 +300,10 @@ The function aggregates per portfolio and rating.
 
 def create_summary_table(given_date, asset_type='public'):
     """
-    For creating the Custom Benchmarks (custom_benchmarks.xlsx) used in performance benchmarking processes by the ALM team.
+    For creating the summary_portfolio sheets of
+    Custom Benchmarks (custom_benchmarks.xlsx) used in performance benchmarking processes by the ALM team.
 
-    Old comments:
-        This function is currently used for creating the summary tables, which only contain info about the portfolio balances.
+    '''This function is currently used for creating the summary tables, which only contain info about the portfolio balances.'''
     """
     df_public, df_private, df_mortgage = model_portfolio.reading_asset_mix(given_date) # TODO! Creates new one - can decouple out
 
@@ -314,13 +314,21 @@ def create_summary_table(given_date, asset_type='public'):
     else:
         asset_mix = df_public
 
+    asset_mix_old = asset_mix.copy()
+
     df = pd.DataFrame(0.0, index=['Portfolio Yield', 'Portfolio Duration', 'Portfolio Balance', 'quarterly expected income', 'Capital estimate'], columns=['Total', 'np', 'group', 'Accum', 'Payout', 'ul'])
     for portfolio in ['Total', 'np', 'group', 'Accum', 'Payout', 'ul']:
         df.loc['Portfolio Balance', portfolio] = sum(asset_mix[portfolio])
     df['SURPLUS'] = 0.0
-    df.loc['Portfolio Balance', 'SURPLUS'] = df.loc['Portfolio Balance', 'Total'] - df[['np', 'group', 'Payout', 'Accum', 'ul']].sum(axis=1)['Portfolio Balance']
+    df.loc['Portfolio Balance', 'SURPLUS'] = df.loc['Portfolio Balance', 'Total'] - df[['np', 'group', 'Payout', 'Accum', 'ul']].sum(axis=1)['Portfolio Balance'] # Checks the correctness perhaps.
 
     df.rename(columns={'Total': 'TOTAL', 'np': 'NONPAR', 'group': 'GROUP', 'Accum': 'ACCUM', 'Payout': 'PAYOUT', 'ul': 'UNIVERSAL'}, inplace=True)
+
+    bool = asset_mix_old.equals(asset_mix)
+
+    if not bool:
+        print("altered asset mix in create_summary_table - doubt this happens")
+
     return df
 
 
@@ -338,12 +346,12 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
         'ul': 'UNIVERSAL',
         'Surplus': 'SURPLUS'
     }
-    rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
-
+    # rename_buckets_map = {5: 6, 4: 5, 3: 4, 2: 3, 1: 2, 0: 1}
+    #
     benchmarking_solution = solution_df.copy()
-
-    benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
-    benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map)
+    #
+    # benchmarking_solution.rename(columns=rename_buckets_map, inplace=True)
+    # benchmarking_solution['portfolio'] = benchmarking_solution['portfolio'].replace(portfolio_map)
 
 
     weights, totals = helpers.create_weight_tables(ftse_data)
@@ -361,7 +369,7 @@ def create_indexData_table(solution_df, given_date, ftse_data: pd.DataFrame, ass
         asset_mix = df_public
         totals = totals.drop(['Corporate'])
 
-    asset_mix.rename(columns={'Accum': 'ACCUM', 'group': 'GROUP', 'np': 'NONPAR', 'Payout': 'PAYOUT', 'Total': 'TOTAL', 'ul': 'UNIVERSAL', 'Surplus':'SURPLUS'}, inplace=True)
+    asset_mix.rename(columns=portfolio_map, inplace=True)
     total_dollar_amount = sum(asset_mix['TOTAL'])
     print(total_dollar_amount)
 

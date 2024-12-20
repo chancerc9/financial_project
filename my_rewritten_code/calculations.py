@@ -539,7 +539,6 @@ def create_bucketing_table() -> pd.DataFrame:
 
 ''' This function takes in the asset mix and the solved solution up to this point to calculate how much of the total 
 allocation has been allocated in each portfolio. Those weights are used as bounds for the total optimization'''
-# Old comment vs my interpretation (kept both in case of error - for now)
 def get_bnds_for_total(Asset_mix: pd.DataFrame, solution_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates the bounds for total optimization based on the asset mix and portfolio allocations.
